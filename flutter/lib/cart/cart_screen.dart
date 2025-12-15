@@ -1,0 +1,477 @@
+import 'package:flutter/material.dart';
+import 'package:khmer25/cart/cart_store.dart';
+import 'package:khmer25/cart/order_success_screen.dart';
+import 'package:khmer25/l10n/lang_store.dart';
+import 'package:khmer25/homePage.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+class CartScreen extends StatelessWidget {
+  const CartScreen({super.key});
+
+  Future<void> _openMaps(BuildContext context) async {
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=delivery+location',
+    );
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(LangStore.t('map.error'))),
+      );
+    }
+  }
+
+  void _handleCheckout(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 70,
+              height: 70,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.green, width: 2),
+              ),
+              child: const Icon(Icons.check, size: 38, color: Colors.green),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              LangStore.t('dialog.order.title'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              LangStore.t('dialog.order.desc'),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: 120,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  CartStore.items.value = [];
+                  Navigator.pop(context); // close dialog
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const OrderSuccessScreen(),
+                    ),
+                  );
+                },
+                child: Text(LangStore.t('dialog.ok')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+        title: Text(
+          LangStore.t('cart.title'),
+          style: const TextStyle(color: Colors.black87),
+        ),
+        centerTitle: true,
+      ),
+      body: ValueListenableBuilder<List<CartItem>>(
+        valueListenable: CartStore.items,
+        builder: (context, items, _) {
+          final subtotal = CartStore.subtotal();
+          final delivery = items.isEmpty ? 0.0 : 1.50;
+          final total = subtotal + delivery;
+
+          if (items.isEmpty) {
+            return Center(
+              child: Text(LangStore.t('cart.empty')),
+            );
+          }
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _HeaderSection(
+                  onSelectLocation: () => _openMaps(context),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  LangStore.t('cart.list'),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ...items.map((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _CartItemTile(item: item),
+                    )),
+                const Divider(height: 32),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      LangStore.t('cart.remarks'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    OutlinedButton(
+                      onPressed: () {},
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: Colors.green.shade700),
+                      ),
+                      child: Text(LangStore.t('cart.buyMore')),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  decoration: InputDecoration(
+                    hintText: LangStore.t('cart.remark.hint'),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                  minLines: 1,
+                  maxLines: 3,
+                ),
+                const Divider(height: 32),
+                _SummaryRow(label: LangStore.t('cart.total'), value: subtotal),
+                _SummaryRow(label: LangStore.t('cart.delivery'), value: delivery),
+                const SizedBox(height: 6),
+                _SummaryRow(
+                  label: LangStore.t('cart.grandTotal'),
+                  value: total,
+                  isBold: true,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onPressed: items.isEmpty
+                        ? null
+                        : () => _handleCheckout(context),
+                    child: Text(
+                      LangStore.t('cart.checkout'),
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+      bottomNavigationBar: _CartBottomNav(currentIndex: 3),
+    );
+  }
+}
+
+class _CartBottomNav extends StatelessWidget {
+  final int currentIndex;
+  const _CartBottomNav({required this.currentIndex});
+
+  @override
+  Widget build(BuildContext context) {
+    return BottomNavigationBar(
+      currentIndex: currentIndex,
+      type: BottomNavigationBarType.fixed,
+      selectedItemColor: Colors.green,
+      unselectedItemColor: Colors.grey,
+      items: [
+        BottomNavigationBarItem(
+          icon: const Icon(Icons.home),
+          label: LangStore.t('nav.home'),
+        ),
+        BottomNavigationBarItem(
+          icon: const Icon(Icons.category),
+          label: LangStore.t('nav.categories'),
+        ),
+        BottomNavigationBarItem(
+          icon: const Icon(Icons.local_offer),
+          label: LangStore.t('nav.promotions'),
+        ),
+        BottomNavigationBarItem(
+          icon: const Icon(Icons.shopping_cart),
+          label: LangStore.t('nav.products'),
+        ),
+        BottomNavigationBarItem(
+          icon: const Icon(Icons.favorite),
+          label: LangStore.t('nav.favorite'),
+        ),
+        BottomNavigationBarItem(
+          icon: const Icon(Icons.person),
+          label: LangStore.t('nav.account'),
+        ),
+      ],
+      onTap: (i) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => HomePage(initialIndex: i)),
+        );
+      },
+    );
+  }
+}
+
+class _HeaderSection extends StatelessWidget {
+  final VoidCallback onSelectLocation;
+  const _HeaderSection({required this.onSelectLocation});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              LangStore.t('cart.shipping'),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            OutlinedButton(
+              onPressed: onSelectLocation,
+              style: OutlinedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                side: BorderSide(color: Colors.green.shade700),
+              ),
+              child: Text(LangStore.t('cart.selectLocation')),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long, color: Colors.yellow.shade800),
+                const SizedBox(width: 8),
+                Text(
+                  LangStore.t('cart.payment'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            Icon(Icons.check_circle, color: Colors.blue.shade700),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 32),
+          child: Text(LangStore.t('cart.payment.note')),
+        ),
+      ],
+    );
+  }
+}
+
+class _CartItemTile extends StatelessWidget {
+  final CartItem item;
+  const _CartItemTile({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: _CartItemImage(imagePath: item.img),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '\$${item.price.toStringAsFixed(2)} / ${item.unit}',
+                  style: TextStyle(
+                    color: Colors.green.shade800,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    _QtyButton(
+                      icon: Icons.remove,
+                      onTap: () => CartStore.updateQuantity(
+                        item.id,
+                        item.quantity - 1,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        '${item.quantity}',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    _QtyButton(
+                      icon: Icons.add,
+                      onTap: () => CartStore.updateQuantity(
+                        item.id,
+                        item.quantity + 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Column(
+            children: [
+              IconButton(
+                onPressed: () => CartStore.remove(item.id),
+                icon: const Icon(Icons.delete, color: Colors.red),
+              ),
+              Text('\$${(item.price * item.quantity).toStringAsFixed(2)}'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CartItemImage extends StatelessWidget {
+  final String imagePath;
+
+  const _CartItemImage({required this.imagePath});
+
+  @override
+  Widget build(BuildContext context) {
+    final path = imagePath.trim();
+    if (path.isEmpty) {
+      return _placeholder();
+    }
+
+    final resolved = path.startsWith('/') ? 'http://127.0.0.1:8000$path' : path;
+    final isNetwork = resolved.startsWith('http');
+    final ImageProvider<Object> provider =
+        isNetwork ? NetworkImage(resolved) : AssetImage(resolved);
+
+    return Image(
+      image: provider,
+      width: 82,
+      height: 82,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _placeholder(),
+    );
+  }
+
+  Widget _placeholder() {
+    return Container(
+      width: 82,
+      height: 82,
+      color: Colors.grey.shade200,
+      alignment: Alignment.center,
+      child: const Icon(Icons.image_not_supported, color: Colors.grey),
+    );
+  }
+}
+
+class _QtyButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _QtyButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade400),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, size: 18),
+      ),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  final String label;
+  final double value;
+  final bool isBold;
+  const _SummaryRow({
+    required this.label,
+    required this.value,
+    this.isBold = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(
+      fontWeight: isBold ? FontWeight.w700 : FontWeight.w500,
+      fontSize: isBold ? 16 : 14,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: style),
+          Text('\$${value.toStringAsFixed(2)}', style: style),
+        ],
+      ),
+    );
+  }
+}
