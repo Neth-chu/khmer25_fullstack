@@ -306,7 +306,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
     return ListView.separated(
       itemCount: items.length,
       physics: const AlwaysScrollableScrollPhysics(),
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      separatorBuilder: (_, __) => const SizedBox(height: 13),
       itemBuilder: (_, i) {
         final category = items[i];
         final isFavorite =
