@@ -22,6 +22,7 @@ class ProductCard extends StatelessWidget {
           context,
           MaterialPageRoute(
             builder: (_) => ProductDetailScreen(product: product),
+            settings: RouteSettings(name: '/product/${product.id}'),
           ),
         );
       },

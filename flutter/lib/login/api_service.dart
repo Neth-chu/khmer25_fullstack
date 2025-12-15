@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import 'package:http/http.dart' as http;
 import 'package:khmer25/models/category_item.dart';
@@ -165,6 +167,8 @@ class ApiService {
   static Future<Map<String, dynamic>> createOrderWithReceipt(
     Map<String, dynamic> payload, {
     File? receipt,
+    Uint8List? receiptBytes,
+    String? receiptName,
   }) async {
     final req = http.MultipartRequest(
       "POST",
@@ -173,8 +177,14 @@ class ApiService {
 
     req.fields["payload"] = jsonEncode(payload);
 
-    if (receipt != null) {
+    if (receipt != null && !kIsWeb) {
       req.files.add(await http.MultipartFile.fromPath("receipt", receipt.path));
+    } else if (receiptBytes != null && receiptBytes.isNotEmpty) {
+      req.files.add(http.MultipartFile.fromBytes(
+        "receipt",
+        receiptBytes,
+        filename: receiptName ?? "receipt.jpg",
+      ));
     }
 
     final streamed = await req.send();

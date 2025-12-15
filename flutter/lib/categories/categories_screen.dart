@@ -8,6 +8,7 @@ import 'package:khmer25/favorite/favorite_store.dart';
 import 'package:khmer25/models/category_item.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/product/products_sreen.dart';
+import 'package:khmer25/services/analytics_service.dart';
 import 'widgets/grid_category_card.dart';
 import 'widgets/list_category_tile.dart';
 import 'widgets/view_toggle_button.dart';
@@ -26,10 +27,14 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   bool _isLoading = false;
   String? _errorMessage;
   List<CategoryItem> _categories = const [];
+  int _lastSearchLength = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AnalyticsService.trackScreen('Categories');
+    });
     _fetchCategories();
   }
 
@@ -70,6 +75,10 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         _categories = kCategories;
         _isLoading = false;
       });
+      AnalyticsService.trackError(
+        screen: 'Categories',
+        code: 'fetch_categories_failed',
+      );
     }
   }
 
@@ -198,7 +207,16 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                         borderSide: BorderSide.none,
                       ),
                     ),
-                    onChanged: (val) => setState(() => _searchText = val),
+                    onChanged: (val) {
+                      setState(() => _searchText = val);
+                      final len = val.length;
+                      if (len != _lastSearchLength && len > 0) {
+                        _lastSearchLength = len;
+                        AnalyticsService.trackSearchUsed(len);
+                      } else if (len == 0) {
+                        _lastSearchLength = 0;
+                      }
+                    },
                   ),
                 ),
               ],
@@ -221,6 +239,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                         context,
                         MaterialPageRoute(
                           builder: (_) => const FavoriteScreen(),
+                          settings: const RouteSettings(name: '/favorite'),
                         ),
                       ),
                     ),
@@ -233,6 +252,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
                         context,
                         MaterialPageRoute(
                           builder: (_) => const CartScreen(),
+                          settings: const RouteSettings(name: '/cart'),
                         ),
                       ),
                     ),
@@ -353,7 +373,12 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => ProductsSreen(initialFilter: filterName),
+        settings: const RouteSettings(name: '/products'),
       ),
+    );
+    AnalyticsService.trackCategoryViewed(
+      id: category.id.toString(),
+      name: filterName,
     );
   }
 

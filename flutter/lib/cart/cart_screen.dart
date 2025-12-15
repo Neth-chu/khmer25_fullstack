@@ -1,12 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:khmer25/cart/cart_store.dart';
-import 'package:khmer25/cart/order_success_screen.dart';
+import 'package:khmer25/cart/checkout_screen.dart';
 import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/homePage.dart';
+import 'package:khmer25/services/analytics_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-class CartScreen extends StatelessWidget {
+class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
+
+  @override
+  State<CartScreen> createState() => _CartScreenState();
+}
+
+class _CartScreenState extends State<CartScreen> {
+  String _lastCartSignature = '';
+  final _remarkCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AnalyticsService.trackScreen('Cart');
+    });
+  }
+
+  @override
+  void dispose() {
+    _remarkCtrl.dispose();
+    super.dispose();
+  }
+
+  void _trackCartView(List<CartItem> items, double total) {
+    final itemCount =
+        items.fold<int>(0, (sum, it) => sum + it.quantity);
+    final signature = '${itemCount}:${total.toStringAsFixed(2)}';
+    if (_lastCartSignature == signature) return;
+    _lastCartSignature = signature;
+    AnalyticsService.trackCartViewed(itemCount: itemCount, total: total);
+  }
 
   Future<void> _openMaps(BuildContext context) async {
     final uri = Uri.parse(
@@ -21,63 +53,21 @@ class CartScreen extends StatelessWidget {
     }
   }
 
-  void _handleCheckout(BuildContext context) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 70,
-              height: 70,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.green, width: 2),
-              ),
-              child: const Icon(Icons.check, size: 38, color: Colors.green),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              LangStore.t('dialog.order.title'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              LangStore.t('dialog.order.desc'),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: 120,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: () {
-                  CartStore.items.value = [];
-                  Navigator.pop(context); // close dialog
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const OrderSuccessScreen(),
-                    ),
-                  );
-                },
-                child: Text(LangStore.t('dialog.ok')),
-              ),
-            ),
-          ],
+  void _handleCheckout(
+    BuildContext context, {
+    required List<CartItem> items,
+    required double total,
+  }) {
+    final itemCount = items.fold<int>(0, (sum, it) => sum + it.quantity);
+    AnalyticsService.trackCheckoutStarted(total: total, itemCount: itemCount);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CheckoutScreen(
+          initialNote: _remarkCtrl.text.trim(),
         ),
+        settings: const RouteSettings(name: '/checkout'),
       ),
     );
   }
@@ -96,16 +86,17 @@ class CartScreen extends StatelessWidget {
         centerTitle: true,
       ),
       body: ValueListenableBuilder<List<CartItem>>(
-        valueListenable: CartStore.items,
-        builder: (context, items, _) {
-          final subtotal = CartStore.subtotal();
-          final delivery = items.isEmpty ? 0.0 : 1.50;
-          final total = subtotal + delivery;
+      valueListenable: CartStore.items,
+      builder: (context, items, _) {
+        final subtotal = CartStore.subtotal();
+        final delivery = items.isEmpty ? 0.0 : 1.50;
+        final total = subtotal + delivery;
+        _trackCartView(items, total);
 
-          if (items.isEmpty) {
-            return Center(
-              child: Text(LangStore.t('cart.empty')),
-            );
+        if (items.isEmpty) {
+          return Center(
+            child: Text(LangStore.t('cart.empty')),
+          );
           }
 
           return SingleChildScrollView(
@@ -151,6 +142,7 @@ class CartScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 TextField(
+                  controller: _remarkCtrl,
                   decoration: InputDecoration(
                     hintText: LangStore.t('cart.remark.hint'),
                     border: OutlineInputBorder(
@@ -179,14 +171,18 @@ class CartScreen extends StatelessWidget {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    onPressed: items.isEmpty
-                        ? null
-                        : () => _handleCheckout(context),
+                  ),
+                  onPressed: items.isEmpty
+                      ? null
+                      : () => _handleCheckout(
+                            context,
+                            items: items,
+                            total: total,
+                          ),
                     child: Text(
                       LangStore.t('cart.checkout'),
                       style: const TextStyle(fontSize: 16),
@@ -243,7 +239,10 @@ class _CartBottomNav extends StatelessWidget {
       onTap: (i) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => HomePage(initialIndex: i)),
+          MaterialPageRoute(
+            builder: (_) => HomePage(initialIndex: i),
+            settings: RouteSettings(name: '/home/$i'),
+          ),
         );
       },
     );

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:khmer25/l10n/lang_store.dart';
+import 'package:khmer25/services/analytics_service.dart';
 import 'screen/slashscreen.dart';
 import 'homePage.dart';
 import 'login/login_page.dart';
 import 'login/signup_page.dart';
 import 'screen/onboarding_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AnalyticsService.init();
   runApp(const MyApp());
 }
 
@@ -21,6 +24,7 @@ class MyApp extends StatelessWidget {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           initialRoute: '/splash',
+          navigatorObservers: [AnalyticsService.routeObserver],
 
           routes: {
             '/splash': (context) => const SplashScreen(),
