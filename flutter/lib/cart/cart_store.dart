@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:khmer25/services/analytics_service.dart';
 
 class CartItem {
   final String id;
@@ -72,6 +73,12 @@ class CartStore {
     }
 
     items.value = updated;
+    AnalyticsService.trackAddToCart(
+      id: id,
+      price: price,
+      qty: qty,
+      name: title,
+    );
   }
 
   static void updateQuantity(String id, int quantity) {

@@ -1,20 +1,42 @@
-from rest_framework import viewsets
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import AllowAny, IsAuthenticated, IsAuthenticatedOrReadOnly
-from rest_framework.response import Response
-from rest_framework.decorators import api_view
-from rest_framework import status
-from django.contrib.auth.hashers import check_password
+import json
 import secrets
+from decimal import Decimal
+from typing import Optional
+
+import requests
+from django.contrib.auth.hashers import check_password
+from django.utils.html import escape
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework import status, viewsets
+from rest_framework.decorators import api_view
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import (
+    AllowAny,
+    IsAuthenticated,
+    IsAuthenticatedOrReadOnly,
+)
+from rest_framework.response import Response
 from .models import (
-    Category, Product, User, Cart, Order, OrderItem,
-    Supplier, AuthToken, Banner
+    Category,
+    Product,
+    User,
+    Cart,
+    Order,
+    OrderItem,
+    Payment,
+    Supplier,
+    AuthToken,
+    Banner,
 )
 from .serializers import (
     CategorySerializer, ProductSerializer, UserSerializer, UserPublicSerializer, CartSerializer, 
     OrderSerializer, OrderItemSerializer, SupplierSerializer,BannerSerializer,
 )
 from .authentication import AuthTokenAuthentication
+
+# Telegram configuration (provided by client)
+TELEGRAM_BOT_TOKEN = "8342567023:AAE_GIwaUb5yEoHHlHRFdz0jzsNjc6ksClM"
+TELEGRAM_CHAT_ID = "-1003393371435"
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
@@ -40,6 +62,195 @@ class CartViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
+    parser_classes = [MultiPartParser, FormParser]
+    authentication_classes = [AuthTokenAuthentication]
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        """
+        Accepts multipart form-data with:
+          - payload: JSON string containing order + items
+          - receipt: optional image upload
+        """
+        try:
+            payload_raw = request.data.get("payload")
+            data = json.loads(payload_raw) if payload_raw else request.data
+        except json.JSONDecodeError:
+            return Response(
+                {"detail": "Invalid JSON in payload."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        items = data.get("items") or []
+        if not items:
+            return Response(
+                {"detail": "Order items are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment_method = self._normalize_payment_method(
+            data.get("payment_method")
+        )
+        if not payment_method:
+            return Response(
+                {"detail": "Unsupported payment method."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # compute totals
+        total = Decimal("0")
+        product_items = []
+        for item in items:
+            try:
+                qty = int(item.get("qty") or item.get("quantity") or 0)
+                price = Decimal(str(item.get("price") or "0"))
+            except Exception:
+                return Response(
+                    {"detail": f"Invalid price/quantity in item {item}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if qty <= 0:
+                continue
+            total += price * qty
+            product_items.append((item, qty, price))
+
+        if total <= 0:
+            return Response(
+                {"detail": "Order total must be greater than zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = getattr(request, "user", None)
+        if not getattr(user, "is_authenticated", False):
+            user = None
+
+        order = Order.objects.create(
+            user=user,
+            customer_name=data.get("name") or data.get("customer_name") or "",
+            phone=data.get("phone") or "",
+            address=data.get("address") or "",
+            total_amount=total,
+            payment_method=payment_method,
+            payment_status="pending",
+            order_status="pending",
+            note=data.get("note") or "",
+        )
+
+        for item, qty, price in product_items:
+            product_id = item.get("id")
+            try:
+                product_obj = Product.objects.get(pk=int(product_id))
+            except (TypeError, ValueError, Product.DoesNotExist):
+                product_obj = None
+
+            OrderItem.objects.create(
+                order=order,
+                product=product_obj,
+                product_name=item.get("title") or "",
+                price=price,
+                quantity=qty,
+            )
+
+        receipt_file = request.data.get("receipt")
+        if receipt_file:
+            Payment.objects.create(
+                order=order,
+                method=payment_method,
+                amount=total,
+                receipt_image=receipt_file,
+                status="pending",
+            )
+
+        self._send_telegram_notification(order, request)
+
+        serializer = self.get_serializer(order)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def _normalize_payment_method(self, method: Optional[str]) -> Optional[str]:
+        if not method:
+            return None
+        val = method.strip().upper()
+        mapping = {
+            "COD": "COD",
+            "CASH_ON_DELIVERY": "COD",
+            "ABA": "ABA_QR",
+            "ABA_QR": "ABA_QR",
+            "QR": "ABA_QR",
+            "KHQR": "ABA_QR",
+            "AC": "AC_QR",
+            "AC_QR": "AC_QR",
+        }
+        return mapping.get(val)
+
+    def _send_telegram_notification(self, order: Order, request):
+        """
+        Push order details to Telegram chat with inline Approve/Reject buttons.
+        """
+        try:
+            receipt_file = None
+            receipt_url = None
+            payment = order.payments.first()
+            if payment and payment.receipt_image:
+                try:
+                    # Prefer sending the binary to Telegram to avoid inaccessible hostnames
+                    receipt_file = payment.receipt_image.path
+                except Exception:
+                    receipt_file = None
+                if not receipt_file:
+                    try:
+                        receipt_url = request.build_absolute_uri(payment.receipt_image.url)
+                    except Exception:
+                        receipt_url = payment.receipt_image.url
+
+            lines = [
+                f"🧾 New Order {escape(order.order_code)}",
+                f"Name: {escape(order.customer_name)}",
+                f"Phone: {escape(order.phone)}",
+                f"Address: {escape(order.address)}",
+                f"Payment: {escape(order.payment_method)} | Status: {escape(order.payment_status)}",
+                f"Total: ${order.total_amount}",
+            ]
+            if order.note:
+                lines.append(f"Note: {escape(order.note)}")
+
+            lines.append("Items:")
+            for item in order.items.all():
+                lines.append(
+                    f"- {escape(item.product_name)} x {item.quantity} = ${item.subtotal or 0}"
+                )
+
+            text = "\n".join(lines)
+
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Approve", "callback_data": f"approve:{order.id}"},
+                        {"text": "❌ Reject", "callback_data": f"reject:{order.id}"},
+                    ]
+                ]
+            }
+
+            base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "parse_mode": "HTML",
+                "reply_markup": json.dumps(keyboard),
+            }
+            if receipt_file:
+                with open(receipt_file, "rb") as fh:
+                    files = {"photo": fh}
+                    payload.update({"caption": text})
+                    requests.post(f"{base}/sendPhoto", data=payload, files=files, timeout=10)
+            elif receipt_url:
+                payload.update({"photo": receipt_url, "caption": text})
+                requests.post(f"{base}/sendPhoto", data=payload, timeout=10)
+            else:
+                payload.update({"text": text})
+                requests.post(f"{base}/sendMessage", data=payload, timeout=10)
+        except Exception as exc:
+            # Do not break order creation if Telegram fails
+            print(f"[telegram] failed to send notification: {exc}")
 
 class OrderItemViewSet(viewsets.ModelViewSet):
     queryset = OrderItem.objects.all()
@@ -63,6 +274,85 @@ class BannerViewSet(viewsets.ModelViewSet):
 class SupplierViewSet(viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
+
+@csrf_exempt
+@api_view(["POST"])
+def telegram_webhook(request):
+    """
+    Handle Telegram callback buttons Approve/Reject.
+    """
+    try:
+        update = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return Response(status=status.HTTP_400_BAD_REQUEST)
+
+    callback = update.get("callback_query") or {}
+    data = callback.get("data") or ""
+    if not data:
+        return Response(status=status.HTTP_200_OK)
+
+    if not (data.startswith("approve:") or data.startswith("reject:")):
+        return Response(status=status.HTTP_200_OK)
+
+    action, order_id = data.split(":", 1)
+    try:
+        order = Order.objects.get(pk=int(order_id))
+    except (ValueError, Order.DoesNotExist):
+        return Response(status=status.HTTP_200_OK)
+
+    if action == "approve":
+        order.order_status = "confirmed"
+        order.payment_status = "paid"
+        status_text = f"✅ Your order {order.order_code} was approved."
+    elif action == "reject":
+        order.order_status = "cancelled"
+        order.payment_status = "failed"
+        status_text = f"❌ Your order {order.order_code} was rejected."
+    else:
+        status_text = f"Order {order.order_code} updated."
+    order.save(update_fields=["order_status", "payment_status"])
+
+    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    msg = callback.get("message", {})
+    chat_id = msg.get("chat", {}).get("id") or TELEGRAM_CHAT_ID
+    message_id = msg.get("message_id")
+
+    try:
+        # Acknowledge button press
+        requests.post(
+            f"{base}/answerCallbackQuery",
+            json={
+              "callback_query_id": callback.get("id"),
+              "text": status_text,
+              "show_alert": False,
+            },
+            timeout=10,
+        )
+        # Remove inline buttons to prevent duplicate actions
+        if message_id:
+            requests.post(
+                f"{base}/editMessageReplyMarkup",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reply_markup": {"inline_keyboard": []},
+                },
+                timeout=10,
+            )
+        # Notify the chat
+        requests.post(
+            f"{base}/sendMessage",
+            json={
+              "chat_id": chat_id,
+              "text": status_text,
+            },
+            timeout=10,
+        )
+    except Exception as exc:
+        print(f"[telegram] callback handling failed: {exc}")
+
+    return Response(status=status.HTTP_200_OK)
+
 
 @api_view(["POST"])
 def register_user(request):

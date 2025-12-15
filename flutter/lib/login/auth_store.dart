@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:khmer25/services/analytics_service.dart';
 
 class AppUser {
   final int id;
@@ -47,6 +48,7 @@ class AuthStore {
 
   static void clear() {
     currentUser.value = null;
+    AnalyticsService.clearUser();
   }
 
   static void logout() {

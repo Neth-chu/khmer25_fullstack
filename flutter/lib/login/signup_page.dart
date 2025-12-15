@@ -3,6 +3,7 @@ import 'package:khmer25/homePage.dart';
 import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/login/auth_store.dart';
+import 'package:khmer25/services/analytics_service.dart';
 import 'login_page.dart';
 
 class SignUpPage extends StatefulWidget {
@@ -125,14 +126,20 @@ class _SignUpPageState extends State<SignUpPage> {
         password: pass,
       );
       final parsed = AppUser.fromJson(res);
-      AuthStore.setUser(AppUser(
+      final user = AppUser(
         id: parsed.id,
         username: parsed.username,
         firstName: parsed.firstName.isNotEmpty ? parsed.firstName : first,
         lastName: parsed.lastName.isNotEmpty ? parsed.lastName : last,
         email: parsed.email.isNotEmpty ? parsed.email : email,
         phone: parsed.phone.isNotEmpty ? parsed.phone : phone,
-      ));
+      );
+      AuthStore.setUser(user);
+      await AnalyticsService.identifyUser(
+        userId: user.id.toString(),
+        email: user.email,
+        locale: LangStore.current.value.name,
+      );
       showSuccessDialog();
     } catch (e) {
       showErrorDialog("${LangStore.t('common.error')}: $e");

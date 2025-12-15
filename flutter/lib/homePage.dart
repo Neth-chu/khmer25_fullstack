@@ -11,7 +11,7 @@ import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/models/category_item.dart';
 import 'package:khmer25/product/products_sreen.dart';
 import 'package:khmer25/promotion/promotion_screen.dart';
-import 'login/login_page.dart';
+import 'package:khmer25/services/analytics_service.dart';
 
 void main() => runApp(const MyApp());
 
@@ -56,6 +56,9 @@ class _HomePageState extends State<HomePage> {
     _selectedIndex = widget.initialIndex;
     _drawerIndex = widget.initialIndex;
     _selectedLang = LangStore.current.value;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _trackTab(_selectedIndex);
+    });
   }
 
   final List<Map<String, dynamic>> _drawerMenu = [
@@ -71,6 +74,7 @@ class _HomePageState extends State<HomePage> {
       _drawerIndex = index;
       _selectedIndex = index;
     });
+    _trackTab(index);
     Navigator.pop(context);
   }
 
@@ -79,6 +83,19 @@ class _HomePageState extends State<HomePage> {
       _selectedLang = _selectedLang == Lang.en ? Lang.km : Lang.en;
       LangStore.toggle();
     });
+  }
+
+  void _trackTab(int index) {
+    const names = [
+      'Home',
+      'Categories',
+      'Promotions',
+      'Products',
+      'Favorite',
+      'Account',
+    ];
+    if (index < 0 || index >= names.length) return;
+    AnalyticsService.trackScreen(names[index]);
   }
 
   @override
@@ -135,7 +152,10 @@ class _HomePageState extends State<HomePage> {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const CartScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => const CartScreen(),
+                          settings: const RouteSettings(name: '/cart'),
+                        ),
                       );
                     },
                   ),
@@ -173,6 +193,7 @@ class _HomePageState extends State<HomePage> {
                 _selectedIndex = 5;
                 _drawerIndex = 5;
               });
+              _trackTab(5);
             },
           ),
         ],
@@ -298,6 +319,7 @@ class _HomePageState extends State<HomePage> {
             _selectedIndex = i;
             _drawerIndex = i;
           });
+          _trackTab(i);
         },
       ),
     );
@@ -610,10 +632,12 @@ class _CategoryGridState extends State<CategoryGrid> {
 
   void _openCategory(BuildContext context, String name) {
     if (name.isEmpty) return;
+    AnalyticsService.trackCategoryViewed(id: name, name: name);
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ProductsSreen(initialFilter: name),
+        settings: RouteSettings(name: '/products'),
       ),
     );
   }
@@ -876,9 +900,3 @@ class SpecialOfferCard extends StatelessWidget {
     );
   }
 }
-
-
-
-
-
-

@@ -3,6 +3,7 @@ import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/product/model/product_cart.dart';
 import 'package:khmer25/product/model/product_model.dart';
+import 'package:khmer25/services/analytics_service.dart';
 
 class ProductsSreen extends StatefulWidget {
   final String? initialFilter;
@@ -78,6 +79,12 @@ class _ProductsSreenState extends State<ProductsSreen> {
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                AnalyticsService.trackError(
+                  screen: 'Products',
+                  code: 'fetch_products_failed',
+                );
+              });
               return Center(child: Text('Failed to load products: ${snapshot.error}'));
             }
             final products = snapshot.data ?? [];

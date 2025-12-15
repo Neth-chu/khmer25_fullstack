@@ -6,6 +6,7 @@ import 'package:khmer25/homePage.dart';
 import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/product/model/product_model.dart';
+import 'package:khmer25/services/analytics_service.dart';
 
 class ProductDetailScreen extends StatefulWidget {
   final ProductModel product;
@@ -28,6 +29,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     super.initState();
     _product = widget.product;
     isFavorite = FavoriteStore.isProductFavorite(_productId);
+    _trackView(_product);
     _loadDetail();
     _loadRelated();
   }
@@ -124,6 +126,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       setState(() {
         _product = fetched;
       });
+      _trackView(fetched);
     } catch (_) {} finally {
       if (mounted) setState(() => _loadingDetail = false);
     }
@@ -320,14 +323,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                 onTap: () {
                   Navigator.pushReplacement(
                     context,
-                            MaterialPageRoute(
-                              builder: (_) => ProductDetailScreen(product: r),
-                            ),
-                          );
-                        },
-                      ),
-                    );
-                  },
+                    MaterialPageRoute(
+                      builder: (_) => ProductDetailScreen(product: r),
+                      settings: RouteSettings(name: '/product/${r.id}'),
+                    ),
+                  );
+                },
+              ),
+            );
+          },
                 ),
               ),
             ],
@@ -533,4 +537,15 @@ Widget _placeholder(double height) {
 
 bool _isNumericId(String id) {
   return RegExp(r'^\d+$').hasMatch(id);
+}
+
+void _trackView(ProductModel product) {
+  final price = double.tryParse(
+    product.price.replaceAll(RegExp(r'[^0-9.]'), ''),
+  );
+  AnalyticsService.trackProductViewed(
+    id: product.id,
+    name: product.title,
+    price: price,
+  );
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/login/auth_store.dart';
+import 'package:khmer25/services/analytics_service.dart';
 import 'signup_page.dart';   // <-- ADD THIS
 
 class LoginPage extends StatefulWidget {
@@ -30,14 +31,20 @@ class _LoginPageState extends State<LoginPage> {
       final res = await ApiService.loginUser(phone: phone, password: pass);
       // Ensure we keep the phone the user typed even if backend omits it
       final parsed = AppUser.fromJson(res);
-      AuthStore.setUser(AppUser(
+      final user = AppUser(
         id: parsed.id,
         username: parsed.username,
         firstName: parsed.firstName,
         lastName: parsed.lastName,
         email: parsed.email,
         phone: parsed.phone.isNotEmpty ? parsed.phone : phone,
-      ));
+      );
+      AuthStore.setUser(user);
+      await AnalyticsService.identifyUser(
+        userId: user.id.toString(),
+        email: user.email,
+        locale: LangStore.current.value.name,
+      );
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(LangStore.t('login.success'))),

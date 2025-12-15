@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     CategoryViewSet, ProductViewSet, UserViewSet, CartViewSet, OrderViewSet,
     OrderItemViewSet,  BannerViewSet,
-    SupplierViewSet, register_user, login_user, get_user_info
+    SupplierViewSet, register_user, login_user, get_user_info,
+    telegram_webhook,
 )
 
 router = DefaultRouter()
@@ -28,4 +29,6 @@ urlpatterns = [
     path("user/", get_user_info, name="get-user-info"),
     path("user", get_user_info, name="get-user-info-ns"),
     path("user/<int:pk>/", get_user_info, name="get-user-info-pk"),
+    path("telegram/webhook", telegram_webhook, name="telegram-webhook"),
+    path("telegram/webhook/", telegram_webhook, name="telegram-webhook-slash"),
 ]
