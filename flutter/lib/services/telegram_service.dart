@@ -18,6 +18,7 @@ class TelegramService {
   /// Sends an order summary with optional receipt image and Approve/Reject buttons.
   static Future<void> sendOrderMessage({
     required String orderCode,
+    int? orderId,
     required String customerName,
     required String phone,
     required String address,
@@ -30,6 +31,7 @@ class TelegramService {
     Uint8List? receiptBytes,
     String? receiptName,
   }) async {
+    final callbackId = orderId?.toString() ?? orderCode;
     final lines = <String>[
       "🧾 New Order $orderCode",
       "Name: $customerName",
@@ -54,8 +56,8 @@ class TelegramService {
     final keyboard = jsonEncode({
       "inline_keyboard": [
         [
-          {"text": "✅ Approve", "callback_data": "approve:$orderCode"},
-          {"text": "❌ Reject", "callback_data": "reject:$orderCode"},
+          {"text": "✅ Approve", "callback_data": "approve:$callbackId"},
+          {"text": "❌ Reject", "callback_data": "reject:$callbackId"},
         ]
       ]
     });

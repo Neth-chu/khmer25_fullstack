@@ -3,7 +3,7 @@ import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/login/auth_store.dart';
 import 'package:khmer25/services/analytics_service.dart';
-import 'signup_page.dart';   // <-- ADD THIS
+import 'signup_page.dart'; // <-- ADD THIS
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -38,17 +38,18 @@ class _LoginPageState extends State<LoginPage> {
         lastName: parsed.lastName,
         email: parsed.email,
         phone: parsed.phone.isNotEmpty ? parsed.phone : phone,
+        avatarUrl: parsed.avatarUrl,
       );
-      AuthStore.setUser(user);
+      await AuthStore.setUser(user, token: res['token']?.toString());
       await AnalyticsService.identifyUser(
         userId: user.id.toString(),
         email: user.email,
         locale: LangStore.current.value.name,
       );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(LangStore.t('login.success'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(LangStore.t('login.success'))));
       Navigator.pop(context);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -79,7 +80,12 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 80),
 
               // LOGO
-              Image.asset("assets/images/logo.jpg", height: 120),
+              Image.asset(
+                "assets/images/logo.jpg",
+                height: 120,
+                errorBuilder: (_, __, ___) =>
+                    Image.asset("assets/images/logo1.png", height: 120),
+              ),
 
               const SizedBox(height: 25),
 

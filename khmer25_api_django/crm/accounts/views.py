@@ -5,10 +5,12 @@ from typing import Optional
 
 import requests
 from django.contrib.auth.hashers import check_password
+from django.db import models
+from django.utils import timezone
 from django.utils.html import escape
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
-from rest_framework.decorators import api_view
+from rest_framework.decorators import action, api_view
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import (
     AllowAny,
@@ -52,6 +54,8 @@ class ProductViewSet(viewsets.ModelViewSet):
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [AllowAny]
 
 class CartViewSet(viewsets.ModelViewSet):
     queryset = Cart.objects.all()
@@ -60,11 +64,54 @@ class CartViewSet(viewsets.ModelViewSet):
 
 
 class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all()
+    queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
     parser_classes = [MultiPartParser, FormParser]
     authentication_classes = [AuthTokenAuthentication]
     permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user_id = self.request.query_params.get("user_id")
+        phone = self.request.query_params.get("phone")
+        if user_id and phone:
+            # Match either the logged-in user or the phone number (guest orders)
+            qs = qs.filter(models.Q(user_id=user_id) | models.Q(phone=phone))
+        elif user_id:
+            qs = qs.filter(user_id=user_id)
+        elif phone:
+            qs = qs.filter(phone=phone)
+        return qs
+
+    @action(detail=True, methods=["post"], url_path="approve", permission_classes=[AllowAny])
+    def approve(self, request, pk=None):
+        order = self.get_object()
+        processed, msg = _apply_order_decision(order, "approve")
+        status_code = status.HTTP_200_OK
+        return Response(
+            {
+                "detail": msg,
+                "order_status": order.order_status,
+                "payment_status": order.payment_status,
+                "processed": processed,
+            },
+            status=status_code,
+        )
+
+    @action(detail=True, methods=["post"], url_path="reject", permission_classes=[AllowAny])
+    def reject(self, request, pk=None):
+        order = self.get_object()
+        processed, msg = _apply_order_decision(order, "reject")
+        status_code = status.HTTP_200_OK
+        return Response(
+            {
+                "detail": msg,
+                "order_status": order.order_status,
+                "payment_status": order.payment_status,
+                "processed": processed,
+            },
+            status=status_code,
+        )
 
     def create(self, request, *args, **kwargs):
         """
@@ -124,6 +171,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not getattr(user, "is_authenticated", False):
             user = None
 
+        # Status defaults based on payment method
+        is_cod = payment_method == "COD"
+        payment_status = "pending"  # represents unpaid/awaiting verification
+        order_status = "confirmed" if is_cod else "pending"
+
         order = Order.objects.create(
             user=user,
             customer_name=data.get("name") or data.get("customer_name") or "",
@@ -131,8 +183,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             address=data.get("address") or "",
             total_amount=total,
             payment_method=payment_method,
-            payment_status="pending",
-            order_status="pending",
+            payment_status=payment_status,
+            order_status=order_status,
             note=data.get("note") or "",
         )
 
@@ -203,13 +255,17 @@ class OrderViewSet(viewsets.ModelViewSet):
                     except Exception:
                         receipt_url = payment.receipt_image.url
 
+            created_at = order.created_at.strftime("%Y-%m-%d %H:%M")
+            title_prefix = "New COD Order" if order.payment_method == "COD" else "New PayByQR Order"
             lines = [
-                f"🧾 New Order {escape(order.order_code)}",
+                f"🧾 {title_prefix} ({escape(order.payment_status).title()})",
+                f"OrderCode: {escape(order.order_code)}",
                 f"Name: {escape(order.customer_name)}",
                 f"Phone: {escape(order.phone)}",
                 f"Address: {escape(order.address)}",
-                f"Payment: {escape(order.payment_method)} | Status: {escape(order.payment_status)}",
-                f"Total: ${order.total_amount}",
+                f"Payment: {escape(order.payment_method)}",
+                f"Status: {escape(order.payment_status)}",
+                f"Date: {created_at}",
             ]
             if order.note:
                 lines.append(f"Note: {escape(order.note)}")
@@ -217,26 +273,33 @@ class OrderViewSet(viewsets.ModelViewSet):
             lines.append("Items:")
             for item in order.items.all():
                 lines.append(
-                    f"- {escape(item.product_name)} x {item.quantity} = ${item.subtotal or 0}"
+                    f"- {escape(item.product_name)} — QTY {item.quantity} — ${item.price} — Subtotal ${item.subtotal or 0}"
                 )
+
+            lines.append(f"Total: ${order.total_amount}")
+            lines.append("✅ Receipt Image:" if (receipt_file or receipt_url) else "Receipt: (not provided)")
 
             text = "\n".join(lines)
 
-            keyboard = {
-                "inline_keyboard": [
-                    [
-                        {"text": "✅ Approve", "callback_data": f"approve:{order.id}"},
-                        {"text": "❌ Reject", "callback_data": f"reject:{order.id}"},
+            keyboard = None
+            if order.payment_method != "COD" and order.payment_status == "pending":
+                # Allow admins to resolve pending payments directly from Telegram
+                keyboard = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ Approve", "callback_data": f"approve:{order.id}"},
+                            {"text": "❌ Reject", "callback_data": f"reject:{order.id}"},
+                        ]
                     ]
-                ]
-            }
+                }
 
             base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
             payload = {
                 "chat_id": TELEGRAM_CHAT_ID,
                 "parse_mode": "HTML",
-                "reply_markup": json.dumps(keyboard),
             }
+            if keyboard:
+                payload["reply_markup"] = json.dumps(keyboard)
             if receipt_file:
                 with open(receipt_file, "rb") as fh:
                     files = {"photo": fh}
@@ -247,7 +310,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                 requests.post(f"{base}/sendPhoto", data=payload, timeout=10)
             else:
                 payload.update({"text": text})
-                requests.post(f"{base}/sendMessage", data=payload, timeout=10)
+                # If we have no keyboard (e.g. already paid), still send message
+                if keyboard:
+                    requests.post(f"{base}/sendMessage", data=payload, timeout=10)
+                else:
+                    requests.post(
+                        f"{base}/sendMessage",
+                        json=payload,
+                        timeout=10,
+                    )
         except Exception as exc:
             # Do not break order creation if Telegram fails
             print(f"[telegram] failed to send notification: {exc}")
@@ -275,6 +346,41 @@ class SupplierViewSet(viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
 
+
+def _apply_order_decision(order: Order, action: str):
+    """
+    Shared helper to approve/reject an order + payment.
+    Returns (processed: bool, message: str).
+    """
+    action = action.lower()
+    # Prevent double-processing
+    if order.payment_status in ("paid", "failed") or order.order_status in ("cancelled", "completed"):
+        return False, f"Order {order.order_code} already processed."
+
+    if action == "approve":
+        order.order_status = "confirmed"
+        order.payment_status = "paid"
+        msg = f"✅ Order {order.order_code} approved."
+    elif action == "reject":
+        order.order_status = "pending" if order.payment_method != "COD" else "cancelled"
+        order.payment_status = "failed"
+        msg = f"❌ Order {order.order_code} rejected."
+    else:
+        return False, "Unsupported action."
+
+    order.save(update_fields=["order_status", "payment_status"])
+
+    for payment in order.payments.all():
+        if action == "approve":
+            payment.status = "verified"
+            payment.paid_at = timezone.now()
+        elif action == "reject":
+            payment.status = "rejected"
+            payment.paid_at = None
+        payment.save(update_fields=["status", "paid_at"])
+
+    return True, msg
+
 @csrf_exempt
 @api_view(["POST"])
 def telegram_webhook(request):
@@ -294,23 +400,16 @@ def telegram_webhook(request):
     if not (data.startswith("approve:") or data.startswith("reject:")):
         return Response(status=status.HTTP_200_OK)
 
-    action, order_id = data.split(":", 1)
+    action, raw_id = data.split(":", 1)
+    order = None
     try:
-        order = Order.objects.get(pk=int(order_id))
+        order = Order.objects.get(pk=int(raw_id))
     except (ValueError, Order.DoesNotExist):
+        order = Order.objects.filter(order_code=raw_id).first()
+    if not order:
         return Response(status=status.HTTP_200_OK)
 
-    if action == "approve":
-        order.order_status = "confirmed"
-        order.payment_status = "paid"
-        status_text = f"✅ Your order {order.order_code} was approved."
-    elif action == "reject":
-        order.order_status = "cancelled"
-        order.payment_status = "failed"
-        status_text = f"❌ Your order {order.order_code} was rejected."
-    else:
-        status_text = f"Order {order.order_code} updated."
-    order.save(update_fields=["order_status", "payment_status"])
+    processed, status_text = _apply_order_decision(order, action)
 
     base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
     msg = callback.get("message", {})

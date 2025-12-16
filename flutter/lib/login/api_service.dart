@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 import 'package:http/http.dart' as http;
@@ -24,7 +23,10 @@ class ApiService {
     throw Exception("Failed to load users (${res.statusCode}): ${res.body}");
   }
 
-  static Future<Map<String, dynamic>> fetchUser({int? id, String? phone}) async {
+  static Future<Map<String, dynamic>> fetchUser({
+    int? id,
+    String? phone,
+  }) async {
     if (id != null && id != 0) {
       final res = await http.get(
         Uri.parse("$baseUrl/api/user/$id"),
@@ -35,8 +37,9 @@ class ApiService {
     }
 
     if (phone != null && phone.isNotEmpty) {
-      final uri = Uri.parse("$baseUrl/api/user")
-          .replace(queryParameters: {"phone": phone});
+      final uri = Uri.parse(
+        "$baseUrl/api/user",
+      ).replace(queryParameters: {"phone": phone});
       final res = await http.get(uri, headers: _jsonHeaders);
       if (res.statusCode == 200) return jsonDecode(res.body);
       throw Exception("Failed to load user (${res.statusCode}): ${res.body}");
@@ -79,10 +82,7 @@ class ApiService {
     final res = await http.post(
       Uri.parse("$baseUrl/api/login"),
       headers: _jsonHeaders,
-      body: jsonEncode({
-        "phone": phone,
-        "password": password,
-      }),
+      body: jsonEncode({"phone": phone, "password": password}),
     );
 
     if (res.statusCode == 200) return jsonDecode(res.body);
@@ -96,7 +96,9 @@ class ApiService {
       final List data = jsonDecode(res.body);
       return data.map((e) => CategoryItem.fromJson(e)).toList();
     }
-    throw Exception("Failed to load categories (${res.statusCode}): ${res.body}");
+    throw Exception(
+      "Failed to load categories (${res.statusCode}): ${res.body}",
+    );
   }
 
   // ---------------- PRODUCTS ----------------
@@ -115,6 +117,34 @@ class ApiService {
       return ProductModel.fromJson(jsonDecode(res.body));
     }
     throw Exception("Failed to load product (${res.statusCode}): ${res.body}");
+  }
+
+  // ---------------- ORDERS (History) ----------------
+  static Future<List<Map<String, dynamic>>> fetchOrders({
+    int? userId,
+    String? phone,
+  }) async {
+    final params = <String, String>{};
+    if (userId != null && userId != 0) {
+      params["user_id"] = "$userId";
+    } else if (phone != null && phone.isNotEmpty) {
+      params["phone"] = phone;
+    }
+    final uri = Uri.parse(
+      "$baseUrl/api/orders/",
+    ).replace(queryParameters: params);
+    final res = await http.get(uri, headers: _jsonHeaders);
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body);
+      if (body is List) {
+        return body
+            .whereType<Map>()
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList();
+      }
+      throw Exception("Unexpected orders response: $body");
+    }
+    throw Exception("Failed to load orders (${res.statusCode}): ${res.body}");
   }
 
   // ---------------- BANNERS ----------------
@@ -180,11 +210,13 @@ class ApiService {
     if (receipt != null && !kIsWeb) {
       req.files.add(await http.MultipartFile.fromPath("receipt", receipt.path));
     } else if (receiptBytes != null && receiptBytes.isNotEmpty) {
-      req.files.add(http.MultipartFile.fromBytes(
-        "receipt",
-        receiptBytes,
-        filename: receiptName ?? "receipt.jpg",
-      ));
+      req.files.add(
+        http.MultipartFile.fromBytes(
+          "receipt",
+          receiptBytes,
+          filename: receiptName ?? "receipt.jpg",
+        ),
+      );
     }
 
     final streamed = await req.send();
@@ -194,5 +226,48 @@ class ApiService {
       return jsonDecode(res.body);
     }
     throw Exception("Order failed (${res.statusCode}): ${res.body}");
+  }
+
+  // ---------------- PROFILE ----------------
+  static Future<Map<String, dynamic>> updateProfile({
+    required int userId,
+    String? username,
+    String? email,
+    String? phone,
+    String? password,
+    File? avatarFile,
+    Uint8List? avatarBytes,
+    String? avatarName,
+  }) async {
+    final uri = Uri.parse("$baseUrl/api/users/$userId/");
+    final req = http.MultipartRequest("PATCH", uri);
+
+    if (username != null) req.fields["username"] = username;
+    if (email != null) req.fields["email"] = email;
+    if (phone != null) req.fields["phone"] = phone;
+    if (password != null && password.isNotEmpty) {
+      req.fields["password"] = password;
+    }
+
+    if (avatarFile != null && !kIsWeb) {
+      req.files.add(
+        await http.MultipartFile.fromPath("avatar", avatarFile.path),
+      );
+    } else if (avatarBytes != null && avatarBytes.isNotEmpty) {
+      req.files.add(
+        http.MultipartFile.fromBytes(
+          "avatar",
+          avatarBytes,
+          filename: avatarName ?? "avatar.jpg",
+        ),
+      );
+    }
+
+    final streamed = await req.send();
+    final res = await http.Response.fromStream(streamed);
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(res.body);
+    }
+    throw Exception("Profile update failed (${res.statusCode}): ${res.body}");
   }
 }

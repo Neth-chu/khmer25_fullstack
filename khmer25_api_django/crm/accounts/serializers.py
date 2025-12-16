@@ -10,7 +10,6 @@ from .models import (
     OrderItem,
     Payment,
     Supplier,
-
 )
 from rest_framework.permissions import AllowAny
 class CategorySerializer(serializers.ModelSerializer):
@@ -48,14 +47,17 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    avatar_url = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = User
-        fields = ["id", "username", "password", "email", "phone",]
+        fields = ["id", "username", "password", "email", "phone", "avatar", "avatar_url"]
         extra_kwargs = {
             "password": {"write_only": True},
             "username": {"required": True},
             "email": {"required": True},
             "phone": {"required": True},
+            "avatar": {"required": False, "allow_null": True},
         }
 
     # Auto-hash password before saving
@@ -77,11 +79,29 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Phone already registered.")
         return value
 
+    def get_avatar_url(self, obj):
+        request = self.context.get("request")
+        if obj.avatar:
+            if request:
+                return request.build_absolute_uri(obj.avatar.url)
+            return obj.avatar.url
+        return None
+
 
 class UserPublicSerializer(serializers.ModelSerializer):
+    avatar_url = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "phone"]
+        fields = ["id", "username", "email", "phone", "avatar_url"]
+
+    def get_avatar_url(self, obj):
+        request = self.context.get("request")
+        if obj.avatar:
+            if request:
+                return request.build_absolute_uri(obj.avatar.url)
+            return obj.avatar.url
+        return None
 
 class CartSerializer(serializers.ModelSerializer):
     class Meta:
@@ -124,4 +144,3 @@ class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = "__all__"
-

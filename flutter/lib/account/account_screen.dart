@@ -3,6 +3,9 @@ import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/login/auth_store.dart';
 import 'package:khmer25/login/login_page.dart';
 import 'package:khmer25/l10n/lang_store.dart';
+import 'package:khmer25/account/edit_profile_tab.dart';
+import 'package:khmer25/favorite/favorite_screen.dart';
+import 'package:khmer25/account/order_history_screen.dart';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -14,6 +17,7 @@ class AccountScreen extends StatefulWidget {
 class _AccountScreenState extends State<AccountScreen> {
   AppUser? _user;
   bool _loading = false;
+  bool _fetching = false;
   String? _error;
   late final VoidCallback _authListener;
 
@@ -42,11 +46,23 @@ class _AccountScreenState extends State<AccountScreen> {
       return;
     }
 
+    // Prevent duplicate fetches for the same user details.
+    if (_fetching) return;
+    final sameUser =
+        _user != null &&
+        _user!.id == base.id &&
+        _user!.phone == base.phone &&
+        _user!.email == base.email &&
+        _user!.username == base.username &&
+        _user!.avatarUrl == base.avatarUrl;
+    if (sameUser) return;
+
     setState(() {
       _loading = true;
       _error = null;
       _user = base;
     });
+    _fetching = true;
 
     final hasIdentifier = (base.id != 0) || base.phone.isNotEmpty;
     if (!hasIdentifier) {
@@ -65,17 +81,27 @@ class _AccountScreenState extends State<AccountScreen> {
       final fetched = AppUser.fromJson(res);
       final merged = AppUser(
         id: fetched.id != 0 ? fetched.id : base.id,
-        username: fetched.username.isNotEmpty ? fetched.username : base.username,
-        firstName: fetched.firstName.isNotEmpty ? fetched.firstName : base.firstName,
-        lastName: fetched.lastName.isNotEmpty ? fetched.lastName : base.lastName,
+        username: fetched.username.isNotEmpty
+            ? fetched.username
+            : base.username,
+        firstName: fetched.firstName.isNotEmpty
+            ? fetched.firstName
+            : base.firstName,
+        lastName: fetched.lastName.isNotEmpty
+            ? fetched.lastName
+            : base.lastName,
         email: fetched.email.isNotEmpty ? fetched.email : base.email,
         phone: fetched.phone.isNotEmpty ? fetched.phone : base.phone,
+        avatarUrl: fetched.avatarUrl.isNotEmpty
+            ? fetched.avatarUrl
+            : base.avatarUrl,
       );
       if (!mounted) return;
       setState(() {
         _user = merged;
         _loading = false;
       });
+      await AuthStore.setUser(merged, token: AuthStore.token);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -83,6 +109,8 @@ class _AccountScreenState extends State<AccountScreen> {
         _error = '$e';
         _user = base;
       });
+    } finally {
+      _fetching = false;
     }
   }
 
@@ -132,8 +160,10 @@ class _AccountScreenState extends State<AccountScreen> {
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28,
+                  vertical: 14,
+                ),
               ),
               child: Text(
                 LangStore.t('login.button'),
@@ -147,10 +177,8 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Widget _buildProfile(BuildContext context, AppUser user) {
-    final initials = _initialsFor(user);
-    final bgColor = _colorFor(initials);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return DefaultTabController(
+      length: 3,
       child: Column(
         children: [
           const SizedBox(height: 10),
@@ -171,97 +199,152 @@ class _AccountScreenState extends State<AccountScreen> {
                 style: const TextStyle(color: Colors.red, fontSize: 12),
               ),
             ),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
+          const SizedBox(height: 8),
+          TabBar(
+            labelColor: Colors.green.shade700,
+            unselectedLabelColor: Colors.grey.shade600,
+            indicatorColor: Colors.green.shade700,
+            tabs: const [
+              Tab(text: 'User Info'),
+              Tab(text: 'Edit Profile'),
+              Tab(text: 'Favorite'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: TabBarView(
               children: [
-                Container(
-                  height: 140,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(16)),
-                  ),
+                _buildInfoCard(context, user),
+                EditProfileTab(
+                  user: user,
+                  onUpdated: (u) {
+                    AuthStore.setUser(u);
+                    _loadUser(u);
+                  },
                 ),
-                CircleAvatar(
-                  radius: 40,
-                  backgroundColor: bgColor,
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  user.displayName,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  user.emailDisplay,
-                  style: const TextStyle(color: Colors.black54),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _infoTile(
-                      label: 'Phone',
-                      value: user.phoneDisplay,
-                    ),
-                    _infoTile(
-                      label: 'Location',
-                      value: 'Not Specified',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () {
-                        AuthStore.logout();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Logged out')),
-                        );
-                      },
-                      child: const Text(
-                        'Logout',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
+                const FavoriteScreen(),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildInfoCard(BuildContext context, AppUser user) {
+    final initials = _initialsFor(user);
+    final bgColor = _colorFor(initials);
+    final avatar = user.avatarUrl;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              height: 140,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (avatar.isNotEmpty)
+              CircleAvatar(radius: 46, backgroundImage: NetworkImage(avatar))
+            else
+              CircleAvatar(
+                radius: 46,
+                backgroundColor: bgColor,
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              user.displayName,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              user.emailDisplay,
+              style: const TextStyle(color: Colors.black54),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _infoTile(label: 'Phone', value: user.phoneDisplay),
+                _infoTile(label: 'Location', value: 'Not Specified'),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.history),
+                  label: const Text('Order History'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: Colors.green.shade600),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const OrderHistoryScreen(),
+                        settings: const RouteSettings(name: '/orders'),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: () {
+                    AuthStore.logout();
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(const SnackBar(content: Text('Logged out')));
+                  },
+                  child: const Text(
+                    'Logout',
+                    style: TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }
