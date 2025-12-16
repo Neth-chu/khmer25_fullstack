@@ -4,6 +4,9 @@ import 'package:khmer25/cart/checkout_screen.dart';
 import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/homePage.dart';
 import 'package:khmer25/services/analytics_service.dart';
+import 'package:khmer25/account/select_location_screen.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class CartScreen extends StatefulWidget {
@@ -16,10 +19,13 @@ class CartScreen extends StatefulWidget {
 class _CartScreenState extends State<CartScreen> {
   String _lastCartSignature = '';
   final _remarkCtrl = TextEditingController();
+  String _locationLabel = 'Not Specified';
+  LatLng? _locationCoords;
 
   @override
   void initState() {
     super.initState();
+    _loadSavedLocation();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AnalyticsService.trackScreen('Cart');
     });
@@ -32,8 +38,7 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   void _trackCartView(List<CartItem> items, double total) {
-    final itemCount =
-        items.fold<int>(0, (sum, it) => sum + it.quantity);
+    final itemCount = items.fold<int>(0, (sum, it) => sum + it.quantity);
     final signature = '${itemCount}:${total.toStringAsFixed(2)}';
     if (_lastCartSignature == signature) return;
     _lastCartSignature = signature;
@@ -47,10 +52,53 @@ class _CartScreenState extends State<CartScreen> {
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(LangStore.t('map.error'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(LangStore.t('map.error'))));
     }
+  }
+
+  Future<void> _loadSavedLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    final label = prefs.getString('user_location_label');
+    final lat = prefs.getDouble('user_location_lat');
+    final lng = prefs.getDouble('user_location_lng');
+    if (!mounted) return;
+    setState(() {
+      _locationLabel = label ?? 'Not Specified';
+      if (lat != null && lng != null) {
+        _locationCoords = LatLng(lat, lng);
+      }
+    });
+  }
+
+  Future<void> _openLocationPicker() async {
+    final result = await Navigator.push<Map<String, dynamic>?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const SelectLocationScreen(),
+        settings: const RouteSettings(name: '/select-location-cart'),
+      ),
+    );
+    if (result == null) return;
+    final label = (result['label'] ?? '').toString();
+    final lat = result['lat'] is num ? (result['lat'] as num).toDouble() : null;
+    final lng = result['lng'] is num ? (result['lng'] as num).toDouble() : null;
+    if (lat == null || lng == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'user_location_label',
+      label.isNotEmpty ? label : 'Pinned location',
+    );
+    await prefs.setDouble('user_location_lat', lat);
+    await prefs.setDouble('user_location_lng', lng);
+
+    if (!mounted) return;
+    setState(() {
+      _locationLabel = label.isNotEmpty ? label : 'Pinned location';
+      _locationCoords = LatLng(lat, lng);
+    });
   }
 
   void _handleCheckout(
@@ -64,9 +112,7 @@ class _CartScreenState extends State<CartScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => CheckoutScreen(
-          initialNote: _remarkCtrl.text.trim(),
-        ),
+        builder: (_) => CheckoutScreen(initialNote: _remarkCtrl.text.trim()),
         settings: const RouteSettings(name: '/checkout'),
       ),
     );
@@ -86,17 +132,15 @@ class _CartScreenState extends State<CartScreen> {
         centerTitle: true,
       ),
       body: ValueListenableBuilder<List<CartItem>>(
-      valueListenable: CartStore.items,
-      builder: (context, items, _) {
-        final subtotal = CartStore.subtotal();
-        final delivery = items.isEmpty ? 0.0 : 1.50;
-        final total = subtotal + delivery;
-        _trackCartView(items, total);
+        valueListenable: CartStore.items,
+        builder: (context, items, _) {
+          final subtotal = CartStore.subtotal();
+          final delivery = items.isEmpty ? 0.0 : 1.50;
+          final total = subtotal + delivery;
+          _trackCartView(items, total);
 
-        if (items.isEmpty) {
-          return Center(
-            child: Text(LangStore.t('cart.empty')),
-          );
+          if (items.isEmpty) {
+            return Center(child: Text(LangStore.t('cart.empty')));
           }
 
           return SingleChildScrollView(
@@ -105,7 +149,9 @@ class _CartScreenState extends State<CartScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _HeaderSection(
-                  onSelectLocation: () => _openMaps(context),
+                  onSelectLocation: _openLocationPicker,
+                  locationLabel: _locationLabel,
+                  locationCoords: _locationCoords,
                 ),
                 const SizedBox(height: 14),
                 Text(
@@ -116,10 +162,12 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                ...items.map((item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _CartItemTile(item: item),
-                    )),
+                ...items.map(
+                  (item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _CartItemTile(item: item),
+                  ),
+                ),
                 const Divider(height: 32),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -158,7 +206,10 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 const Divider(height: 32),
                 _SummaryRow(label: LangStore.t('cart.total'), value: subtotal),
-                _SummaryRow(label: LangStore.t('cart.delivery'), value: delivery),
+                _SummaryRow(
+                  label: LangStore.t('cart.delivery'),
+                  value: delivery,
+                ),
                 const SizedBox(height: 6),
                 _SummaryRow(
                   label: LangStore.t('cart.grandTotal'),
@@ -171,14 +222,14 @@ class _CartScreenState extends State<CartScreen> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
-                  ),
-                  onPressed: items.isEmpty
-                      ? null
-                      : () => _handleCheckout(
+                    onPressed: items.isEmpty
+                        ? null
+                        : () => _handleCheckout(
                             context,
                             items: items,
                             total: total,
@@ -251,7 +302,13 @@ class _CartBottomNav extends StatelessWidget {
 
 class _HeaderSection extends StatelessWidget {
   final VoidCallback onSelectLocation;
-  const _HeaderSection({required this.onSelectLocation});
+  final String locationLabel;
+  final LatLng? locationCoords;
+  const _HeaderSection({
+    required this.onSelectLocation,
+    required this.locationLabel,
+    required this.locationCoords,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -268,8 +325,10 @@ class _HeaderSection extends StatelessWidget {
             OutlinedButton(
               onPressed: onSelectLocation,
               style: OutlinedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 side: BorderSide(color: Colors.green.shade700),
               ),
               child: Text(LangStore.t('cart.selectLocation')),
@@ -296,7 +355,22 @@ class _HeaderSection extends StatelessWidget {
         const SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.only(left: 32),
-          child: Text(LangStore.t('cart.payment.note')),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(LangStore.t('cart.payment.note')),
+              const SizedBox(height: 4),
+              Text(
+                "Selected: $locationLabel",
+                style: const TextStyle(color: Colors.black54, fontSize: 12),
+              ),
+              if (locationCoords != null)
+                Text(
+                  "Pin: ${locationCoords!.latitude.toStringAsFixed(5)}, ${locationCoords!.longitude.toStringAsFixed(5)}",
+                  style: const TextStyle(color: Colors.black45, fontSize: 11),
+                ),
+            ],
+          ),
         ),
       ],
     );
@@ -348,10 +422,8 @@ class _CartItemTile extends StatelessWidget {
                   children: [
                     _QtyButton(
                       icon: Icons.remove,
-                      onTap: () => CartStore.updateQuantity(
-                        item.id,
-                        item.quantity - 1,
-                      ),
+                      onTap: () =>
+                          CartStore.updateQuantity(item.id, item.quantity - 1),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -362,10 +434,8 @@ class _CartItemTile extends StatelessWidget {
                     ),
                     _QtyButton(
                       icon: Icons.add,
-                      onTap: () => CartStore.updateQuantity(
-                        item.id,
-                        item.quantity + 1,
-                      ),
+                      onTap: () =>
+                          CartStore.updateQuantity(item.id, item.quantity + 1),
                     ),
                   ],
                 ),
@@ -401,8 +471,9 @@ class _CartItemImage extends StatelessWidget {
 
     final resolved = path.startsWith('/') ? 'http://127.0.0.1:8000$path' : path;
     final isNetwork = resolved.startsWith('http');
-    final ImageProvider<Object> provider =
-        isNetwork ? NetworkImage(resolved) : AssetImage(resolved);
+    final ImageProvider<Object> provider = isNetwork
+        ? NetworkImage(resolved)
+        : AssetImage(resolved);
 
     return Image(
       image: provider,
