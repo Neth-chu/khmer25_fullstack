@@ -32,6 +32,7 @@ class User(models.Model):
     password = models.CharField(max_length=128)  # hashed password stored here
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=20, blank=True)
+    avatar = models.ImageField(upload_to="avatars/", blank=True, null=True)
 
 
 
@@ -202,5 +203,4 @@ class AuthToken(models.Model):
 
     def __str__(self):
         return f"Token for {self.user.username}"
-
 

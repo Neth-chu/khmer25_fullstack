@@ -46,7 +46,7 @@ class _SignUpPageState extends State<SignUpPage> {
           TextButton(
             child: Text(LangStore.t('dialog.ok')),
             onPressed: () => Navigator.pop(context),
-          )
+          ),
         ],
       ),
     );
@@ -66,8 +66,10 @@ class _SignUpPageState extends State<SignUpPage> {
               const SizedBox(height: 20),
               Text(
                 LangStore.t('signup.success'),
-                style:
-                    const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 10),
               Text(
@@ -84,8 +86,10 @@ class _SignUpPageState extends State<SignUpPage> {
                     MaterialPageRoute(builder: (context) => const HomePage()),
                   );
                 },
-                child:
-                    Text(LangStore.t('dialog.ok'), style: const TextStyle(fontSize: 18)),
+                child: Text(
+                  LangStore.t('dialog.ok'),
+                  style: const TextStyle(fontSize: 18),
+                ),
               ),
             ],
           ),
@@ -133,8 +137,9 @@ class _SignUpPageState extends State<SignUpPage> {
         lastName: parsed.lastName.isNotEmpty ? parsed.lastName : last,
         email: parsed.email.isNotEmpty ? parsed.email : email,
         phone: parsed.phone.isNotEmpty ? parsed.phone : phone,
+        avatarUrl: parsed.avatarUrl,
       );
-      AuthStore.setUser(user);
+      await AuthStore.setUser(user, token: res['token']?.toString());
       await AnalyticsService.identifyUser(
         userId: user.id.toString(),
         email: user.email,
@@ -182,15 +187,25 @@ class _SignUpPageState extends State<SignUpPage> {
                 ),
                 child: Column(
                   children: [
-                    buildField(LangStore.t('signup.firstName'), firstNameController),
+                    buildField(
+                      LangStore.t('signup.firstName'),
+                      firstNameController,
+                    ),
                     const SizedBox(height: 20),
-                    buildField(LangStore.t('signup.lastName'), lastNameController),
+                    buildField(
+                      LangStore.t('signup.lastName'),
+                      lastNameController,
+                    ),
                     const SizedBox(height: 20),
                     buildField(LangStore.t('signup.email'), emailController),
                     const SizedBox(height: 20),
                     buildField(LangStore.t('signup.phone'), phoneController),
                     const SizedBox(height: 20),
-                    buildField(LangStore.t('signup.password'), passwordController, obscure: true),
+                    buildField(
+                      LangStore.t('signup.password'),
+                      passwordController,
+                      obscure: true,
+                    ),
                     const SizedBox(height: 20),
                     buildField(
                       LangStore.t('signup.confirm'),
@@ -209,11 +224,13 @@ class _SignUpPageState extends State<SignUpPage> {
                         ),
                         child: Text(
                           LangStore.t('signup.submit'),
-                          style:
-                              const TextStyle(fontSize: 20, color: Colors.white),
+                          style: const TextStyle(
+                            fontSize: 20,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                    )
+                    ),
                   ],
                 ),
               ),
@@ -252,8 +269,11 @@ class _SignUpPageState extends State<SignUpPage> {
     );
   }
 
-  Widget buildField(String label, TextEditingController controller,
-      {bool obscure = false}) {
+  Widget buildField(
+    String label,
+    TextEditingController controller, {
+    bool obscure = false,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -269,7 +289,10 @@ class _SignUpPageState extends State<SignUpPage> {
             obscureText: obscure,
             decoration: const InputDecoration(
               border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 15,
+              ),
             ),
           ),
         ),

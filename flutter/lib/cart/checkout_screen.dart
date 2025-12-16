@@ -6,7 +6,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:khmer25/cart/cart_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/services/analytics_service.dart';
-import 'package:khmer25/services/telegram_service.dart';
 
 enum PayMethod { cod, qrAba, qrAc }
 
@@ -104,7 +103,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final picker = ImagePicker();
 
     if (kIsWeb) {
-      final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+      final x = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+      );
       if (x != null) {
         final bytes = await x.readAsBytes();
         setState(() {
@@ -116,7 +118,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 80,
+    );
     if (x != null) {
       setState(() {
         receipt = File(x.path);
@@ -136,21 +141,31 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> payNow() async {
     if (CartStore.items.value.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Cart is empty")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Cart is empty")));
       return;
     }
 
     if (needReceipt && receipt == null && receiptBytes == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Please upload receipt")));
+      return;
+    }
+
+    if (nameCtrl.text.trim().isEmpty ||
+        phoneCtrl.text.trim().isEmpty ||
+        addressCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please upload receipt")),
+        const SnackBar(content: Text("Name, phone, and address are required")),
       );
       return;
     }
 
     setState(() => loading = true);
 
+    final isCod = method == PayMethod.cod;
     final payload = {
       "customer_name": nameCtrl.text.trim(),
       "name": nameCtrl.text.trim(), // fallback for API compatibility
@@ -172,8 +187,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         receiptName: receiptName,
       );
 
-      final itemCount = CartStore.items.value.fold<int>(0, (sum, it) => sum + it.quantity);
+      final itemCount = CartStore.items.value.fold<int>(
+        0,
+        (sum, it) => sum + it.quantity,
+      );
       final orderCode = _resolveOrderCode(response);
+      final orderId = _resolveOrderId(response);
 
       CartStore.clear();
       await AnalyticsService.trackOrderSubmitted(
@@ -187,7 +206,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         context: context,
         builder: (_) => AlertDialog(
           title: const Text("Success"),
-          content: const Text("Order placed successfully"),
+          content: Text(
+            isCod
+                ? "Order placed successfully. Pay on delivery."
+                : "Payment is pending. We will confirm once the receipt is approved.",
+          ),
           actions: [
             TextButton(
               onPressed: () {
@@ -202,9 +225,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     } catch (e) {
       if (!mounted) return;
       AnalyticsService.trackError(screen: 'Checkout', code: 'payment_failed');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Payment failed: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Payment failed: $e")));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -228,9 +251,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "Name")),
-            TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: "Phone")),
-            TextField(controller: addressCtrl, decoration: const InputDecoration(labelText: "Address")),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: "Name"),
+            ),
+            TextField(
+              controller: phoneCtrl,
+              decoration: const InputDecoration(labelText: "Phone"),
+            ),
+            TextField(
+              controller: addressCtrl,
+              decoration: const InputDecoration(labelText: "Address"),
+            ),
             TextField(
               controller: noteCtrl,
               decoration: const InputDecoration(labelText: "Note"),
@@ -239,7 +271,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
 
             const SizedBox(height: 12),
-            const Text("Select payment type", style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              "Select payment type",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 12,
@@ -260,7 +295,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 _PaymentCard(
                   label: "Pay with QR",
                   icon: Icons.qr_code_scanner,
-                  selected: method == PayMethod.qrAba || method == PayMethod.qrAc,
+                  selected:
+                      method == PayMethod.qrAba || method == PayMethod.qrAc,
                   onTap: () {
                     setState(() {
                       if (method == PayMethod.cod) {
@@ -277,7 +313,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
             if (method == PayMethod.qrAba || method == PayMethod.qrAc) ...[
               const SizedBox(height: 10),
-              const Text("QR provider", style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                "QR provider",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
@@ -369,7 +408,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               child: ElevatedButton(
                 onPressed: loading ? null : payNow,
                 child: loading
-                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Text("Pay Now"),
               ),
             ),
@@ -389,16 +432,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return 'order-${DateTime.now().millisecondsSinceEpoch}';
   }
 
-  String _asString(dynamic v) => v == null ? "" : v.toString();
-
-  List<Map<String, dynamic>> _asItemList(dynamic v) {
-    if (v is List) {
-      return v
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .toList();
-    }
-    return const [];
+  int? _resolveOrderId(Map<String, dynamic> response) {
+    final raw = response['id'];
+    if (raw is int) return raw;
+    if (raw is String) return int.tryParse(raw);
+    return null;
   }
 }
 
