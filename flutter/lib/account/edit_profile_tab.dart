@@ -206,7 +206,7 @@ class _EditProfileTabState extends State<EditProfileTab> {
       return _safePreview(FileImage(avatarFile!));
     }
     if (existingUrl.isNotEmpty) {
-      return _safePreview(NetworkImage(existingUrl));
+      return _safePreview(NetworkImage(_resolveUrl(existingUrl)));
     }
     return const SizedBox.shrink();
   }
@@ -277,22 +277,46 @@ class _EditProfileTabState extends State<EditProfileTab> {
       final updated = AppUser.fromJson(payload);
       widget.onUpdated(updated);
       if (!mounted) return;
-      _showSnackBar("Profile updated");
+      await _showDialog(
+        title: "Profile Updated",
+        message: "Your changes have been saved.",
+      );
     } catch (e) {
       if (!mounted) return;
-      _showSnackBar("Failed to save: $e");
+      await _showDialog(
+        title: "Update Failed",
+        message: "Failed to save: $e",
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(fontSize: 14)),
-        duration: const Duration(milliseconds: 1400),
-        backgroundColor: Colors.blue,
+  Future<void> _showDialog({
+    required String title,
+    required String message,
+    bool isError = false,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(isError ? "Dismiss" : "OK"),
+          ),
+        ],
       ),
     );
+  }
+
+  String _resolveUrl(String url) {
+    if (url.isEmpty) return '';
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/')) return '${ApiService.baseUrl}$url';
+    return '${ApiService.baseUrl}/$url';
   }
 }

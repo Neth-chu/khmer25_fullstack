@@ -262,21 +262,7 @@ class _AccountScreenState extends State<AccountScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            if (avatar.isNotEmpty)
-              CircleAvatar(radius: 46, backgroundImage: NetworkImage(avatar))
-            else
-              CircleAvatar(
-                radius: 46,
-                backgroundColor: bgColor,
-                child: Text(
-                  initials,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
+            _buildAvatar(avatar, initials, bgColor),
             const SizedBox(height: 12),
             Text(
               user.displayName,
@@ -389,6 +375,51 @@ class _AccountScreenState extends State<AccountScreen> {
     final combined = (firstChar + lastChar).toUpperCase();
     if (combined.isNotEmpty) return combined;
     return 'US';
+  }
+
+  Widget _buildAvatar(String avatar, String initials, Color bgColor) {
+    final resolved = _resolveUrl(avatar);
+    if (resolved.isEmpty) {
+      return CircleAvatar(
+        radius: 46,
+        backgroundColor: bgColor,
+        child: Text(
+          initials,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+    return CircleAvatar(
+      radius: 46,
+      backgroundColor: Colors.grey.shade200,
+      child: ClipOval(
+        child: Image.network(
+          resolved,
+          width: 92,
+          height: 92,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Text(
+            initials,
+            style: const TextStyle(
+              color: Colors.black54,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _resolveUrl(String url) {
+    if (url.isEmpty) return '';
+    if (url.startsWith('http')) return url;
+    if (url.startsWith('/')) return '${ApiService.baseUrl}$url';
+    return '${ApiService.baseUrl}/$url';
   }
 
   Color _colorFor(String key) {
