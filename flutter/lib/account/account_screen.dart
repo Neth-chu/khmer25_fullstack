@@ -9,6 +9,7 @@ import 'package:khmer25/account/order_history_screen.dart';
 import 'package:khmer25/account/select_location_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:open_location_code/open_location_code.dart' as olc;
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -23,7 +24,6 @@ class _AccountScreenState extends State<AccountScreen> {
   bool _fetching = false;
   String? _error;
   String _locationLabel = 'Not Specified';
-  LatLng? _locationCoords;
   late final VoidCallback _authListener;
 
   @override
@@ -46,12 +46,10 @@ class _AccountScreenState extends State<AccountScreen> {
     final label = prefs.getString('user_location_label');
     final lat = prefs.getDouble('user_location_lat');
     final lng = prefs.getDouble('user_location_lng');
+    final display = _mergeLabel(label, lat, lng);
     if (!mounted) return;
     setState(() {
-      _locationLabel = label ?? 'Not Specified';
-      if (lat != null && lng != null) {
-        _locationCoords = LatLng(lat, lng);
-      }
+      _locationLabel = display;
     });
   }
 
@@ -264,7 +262,7 @@ class _AccountScreenState extends State<AccountScreen> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -472,18 +470,16 @@ class _AccountScreenState extends State<AccountScreen> {
     final lng = result['lng'] is num ? (result['lng'] as num).toDouble() : null;
     if (lat == null || lng == null) return;
 
+    final mergedLabel = _mergeLabel(label, lat, lng);
+
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'user_location_label',
-      label.isNotEmpty ? label : 'Pinned location',
-    );
+    await prefs.setString('user_location_label', mergedLabel);
     await prefs.setDouble('user_location_lat', lat);
     await prefs.setDouble('user_location_lng', lng);
 
     if (!mounted) return;
     setState(() {
-      _locationLabel = label.isNotEmpty ? label : 'Pinned location';
-      _locationCoords = LatLng(lat, lng);
+      _locationLabel = mergedLabel;
     });
   }
 
@@ -500,5 +496,26 @@ class _AccountScreenState extends State<AccountScreen> {
     ];
     final index = key.codeUnits.fold<int>(0, (p, c) => p + c) % palette.length;
     return palette[index];
+  }
+
+  String _mergeLabel(String? raw, double? lat, double? lng) {
+    final clean = (raw ?? '').trim();
+    final plus = _encodePlus(lat, lng);
+    if (clean.isNotEmpty) {
+      if (clean.contains('+')) return clean;
+      if (plus.isNotEmpty) return '$plus, $clean';
+      return clean;
+    }
+    if (plus.isNotEmpty) return plus;
+    return 'Not Specified';
+  }
+
+  String _encodePlus(double? lat, double? lng) {
+    if (lat == null || lng == null) return '';
+    final code = olc.PlusCode.encode(
+      LatLng(lat, lng),
+      codeLength: 10,
+    );
+    return code.toString().split(' ').first;
   }
 }
