@@ -6,6 +6,10 @@ import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/account/edit_profile_tab.dart';
 import 'package:khmer25/favorite/favorite_screen.dart';
 import 'package:khmer25/account/order_history_screen.dart';
+import 'package:khmer25/account/select_location_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:open_location_code/open_location_code.dart' as olc;
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -19,6 +23,7 @@ class _AccountScreenState extends State<AccountScreen> {
   bool _loading = false;
   bool _fetching = false;
   String? _error;
+  String _locationLabel = 'Not Specified';
   late final VoidCallback _authListener;
 
   @override
@@ -27,12 +32,25 @@ class _AccountScreenState extends State<AccountScreen> {
     _authListener = () => _loadUser(AuthStore.currentUser.value);
     AuthStore.currentUser.addListener(_authListener);
     _loadUser(AuthStore.currentUser.value);
+    _loadSavedLocation();
   }
 
   @override
   void dispose() {
     AuthStore.currentUser.removeListener(_authListener);
     super.dispose();
+  }
+
+  Future<void> _loadSavedLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    final label = prefs.getString('user_location_label');
+    final lat = prefs.getDouble('user_location_lat');
+    final lng = prefs.getDouble('user_location_lng');
+    final display = _mergeLabel(label, lat, lng);
+    if (!mounted) return;
+    setState(() {
+      _locationLabel = display;
+    });
   }
 
   Future<void> _loadUser(AppUser? base) async {
@@ -244,7 +262,7 @@ class _AccountScreenState extends State<AccountScreen> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 10,
               offset: const Offset(0, 4),
             ),
@@ -278,7 +296,7 @@ class _AccountScreenState extends State<AccountScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 _infoTile(label: 'Phone', value: user.phoneDisplay),
-                _infoTile(label: 'Location', value: 'Not Specified'),
+                _infoTile(label: 'Location', value: _locationLabel),
               ],
             ),
             const SizedBox(height: 20),
@@ -302,6 +320,22 @@ class _AccountScreenState extends State<AccountScreen> {
                       ),
                     );
                   },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.place),
+                  label: const Text('Select Location'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: Colors.blue.shade600),
+                  ),
+                  onPressed: _openLocationPicker,
                 ),
               ),
             ),
@@ -422,6 +456,33 @@ class _AccountScreenState extends State<AccountScreen> {
     return '${ApiService.baseUrl}/$url';
   }
 
+  Future<void> _openLocationPicker() async {
+    final result = await Navigator.push<Map<String, dynamic>?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const SelectLocationScreen(),
+        settings: const RouteSettings(name: '/select-location'),
+      ),
+    );
+    if (result == null) return;
+    final label = (result['label'] ?? '').toString();
+    final lat = result['lat'] is num ? (result['lat'] as num).toDouble() : null;
+    final lng = result['lng'] is num ? (result['lng'] as num).toDouble() : null;
+    if (lat == null || lng == null) return;
+
+    final mergedLabel = _mergeLabel(label, lat, lng);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_location_label', mergedLabel);
+    await prefs.setDouble('user_location_lat', lat);
+    await prefs.setDouble('user_location_lng', lng);
+
+    if (!mounted) return;
+    setState(() {
+      _locationLabel = mergedLabel;
+    });
+  }
+
   Color _colorFor(String key) {
     final palette = <Color>[
       Colors.green.shade600,
@@ -435,5 +496,26 @@ class _AccountScreenState extends State<AccountScreen> {
     ];
     final index = key.codeUnits.fold<int>(0, (p, c) => p + c) % palette.length;
     return palette[index];
+  }
+
+  String _mergeLabel(String? raw, double? lat, double? lng) {
+    final clean = (raw ?? '').trim();
+    final plus = _encodePlus(lat, lng);
+    if (clean.isNotEmpty) {
+      if (clean.contains('+')) return clean;
+      if (plus.isNotEmpty) return '$plus, $clean';
+      return clean;
+    }
+    if (plus.isNotEmpty) return plus;
+    return 'Not Specified';
+  }
+
+  String _encodePlus(double? lat, double? lng) {
+    if (lat == null || lng == null) return '';
+    final code = olc.PlusCode.encode(
+      LatLng(lat, lng),
+      codeLength: 10,
+    );
+    return code.toString().split(' ').first;
   }
 }

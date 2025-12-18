@@ -188,7 +188,7 @@ class _ProductsSreenState extends State<ProductsSreen> {
   int _computeCrossAxisCount(double width) {
     if (width >= 1200) return 5; // web/desktop
     if (width >= 900) return 4;  // tablets landscape
-    if (width >= 600) return 3;  // tablets portrait
+    if (width >= 650) return 3;  // tablets portrait
     return 3;                     // phones
   }
 

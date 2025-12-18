@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:khmer25/cart/cart_store.dart';
+import 'package:khmer25/login/auth_store.dart';
 import 'package:khmer25/login/api_service.dart';
 import 'package:khmer25/services/analytics_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:open_location_code/open_location_code.dart' as olc;
 
 enum PayMethod { cod, qrAba, qrAc }
 
@@ -25,17 +29,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? receiptName;
   bool loading = false;
 
-  final nameCtrl = TextEditingController();
-  final phoneCtrl = TextEditingController();
-  final addressCtrl = TextEditingController();
-  final noteCtrl = TextEditingController();
-
   @override
   void initState() {
     super.initState();
-    if (widget.initialNote != null && widget.initialNote!.isNotEmpty) {
-      noteCtrl.text = widget.initialNote!;
-    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AnalyticsService.trackScreen('Checkout');
       AnalyticsService.trackPaymentSelected(paymentMethod);
@@ -154,29 +150,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
 
-    if (nameCtrl.text.trim().isEmpty ||
-        phoneCtrl.text.trim().isEmpty ||
-        addressCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Name, phone, and address are required")),
-      );
-      return;
-    }
-
+    final locationMeta = await _loadLocationMeta();
     setState(() => loading = true);
 
     final isCod = method == PayMethod.cod;
+    final user = AuthStore.currentUser.value;
+    final userName = (user?.displayName ?? '').trim();
+    final userPhone = (user?.phone ?? '').trim();
+    final customerName = userName.isNotEmpty ? userName : 'Guest';
+    final phone = userPhone.isNotEmpty ? userPhone : 'N/A';
+    final locationAddress = (locationMeta['address'] ?? '').trim();
+    final address = locationAddress.isNotEmpty
+        ? locationAddress
+        : 'Not provided';
+    final note = widget.initialNote?.trim() ?? '';
     final payload = {
-      "customer_name": nameCtrl.text.trim(),
-      "name": nameCtrl.text.trim(), // fallback for API compatibility
-      "phone": phoneCtrl.text.trim(),
-      "address": addressCtrl.text.trim(),
+      "customer_name": customerName,
+      "name": customerName, // fallback for API compatibility
+      "phone": phone,
+      "address": address,
       "payment_method": paymentMethod, // COD / ABA_QR / AC_QR
       "payment_status": "pending",
       "order_status": "pending",
       "total_amount": total,
-      "note": noteCtrl.text.trim(),
+      "note": note,
       "items": CartStore.toPayloadItems(),
+      "location_label": locationMeta['label'] ?? '',
+      "location_coords": locationMeta['coords'] ?? '',
     };
 
     try {
@@ -192,7 +192,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         (sum, it) => sum + it.quantity,
       );
       final orderCode = _resolveOrderCode(response);
-      final orderId = _resolveOrderId(response);
 
       CartStore.clear();
       await AnalyticsService.trackOrderSubmitted(
@@ -233,13 +232,41 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    nameCtrl.dispose();
-    phoneCtrl.dispose();
-    addressCtrl.dispose();
-    noteCtrl.dispose();
-    super.dispose();
+  Future<Map<String, String>> _loadLocationMeta() async {
+    final prefs = await SharedPreferences.getInstance();
+    final labelRaw = (prefs.getString('user_location_label') ?? '').trim();
+    final lat = prefs.getDouble('user_location_lat');
+    final lng = prefs.getDouble('user_location_lng');
+    final coords = (lat != null && lng != null)
+        ? '${lat.toStringAsFixed(6)},${lng.toStringAsFixed(6)}'
+        : '';
+    final label = _mergeLabel(labelRaw, lat, lng);
+    final address = label.isNotEmpty ? label : coords;
+    return {"label": label, "coords": coords, "address": address};
+  }
+
+  String _mergeLabel(String? raw, double? lat, double? lng) {
+    final clean = (raw ?? '').trim();
+    final plus = _encodePlus(lat, lng);
+    if (clean.isNotEmpty) {
+      if (clean.contains('+')) return clean;
+      if (plus.isNotEmpty) return '$plus, $clean';
+      return clean;
+    }
+    if (plus.isNotEmpty) return plus;
+    if (lat != null && lng != null) {
+      return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+    }
+    return '';
+  }
+
+  String _encodePlus(double? lat, double? lng) {
+    if (lat == null || lng == null) return '';
+    final code = olc.PlusCode.encode(
+      LatLng(lat, lng),
+      codeLength: 10,
+    );
+    return code.toString().split(' ').first;
   }
 
   @override
@@ -251,24 +278,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(labelText: "Name"),
-            ),
-            TextField(
-              controller: phoneCtrl,
-              decoration: const InputDecoration(labelText: "Phone"),
-            ),
-            TextField(
-              controller: addressCtrl,
-              decoration: const InputDecoration(labelText: "Address"),
-            ),
-            TextField(
-              controller: noteCtrl,
-              decoration: const InputDecoration(labelText: "Note"),
-              minLines: 1,
-              maxLines: 3,
-            ),
+        
 
             const SizedBox(height: 12),
             const Text(
@@ -464,7 +474,8 @@ class _PaymentCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: color),
-          color: selected ? Colors.green.withOpacity(0.08) : Colors.white,
+          color:
+              selected ? Colors.green.withValues(alpha: 0.08) : Colors.white,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

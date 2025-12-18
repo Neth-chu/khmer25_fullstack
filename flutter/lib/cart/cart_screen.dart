@@ -4,7 +4,10 @@ import 'package:khmer25/cart/checkout_screen.dart';
 import 'package:khmer25/l10n/lang_store.dart';
 import 'package:khmer25/homePage.dart';
 import 'package:khmer25/services/analytics_service.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:khmer25/account/select_location_screen.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:open_location_code/open_location_code.dart' as olc;
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -16,10 +19,13 @@ class CartScreen extends StatefulWidget {
 class _CartScreenState extends State<CartScreen> {
   String _lastCartSignature = '';
   final _remarkCtrl = TextEditingController();
+  String _locationLabel = 'Not Specified';
+  LatLng? _locationCoords;
 
   @override
   void initState() {
     super.initState();
+    _loadSavedLocation();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AnalyticsService.trackScreen('Cart');
     });
@@ -32,25 +38,75 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   void _trackCartView(List<CartItem> items, double total) {
-    final itemCount =
-        items.fold<int>(0, (sum, it) => sum + it.quantity);
-    final signature = '${itemCount}:${total.toStringAsFixed(2)}';
+    final itemCount = items.fold<int>(0, (sum, it) => sum + it.quantity);
+    final signature = '$itemCount:${total.toStringAsFixed(2)}';
     if (_lastCartSignature == signature) return;
     _lastCartSignature = signature;
     AnalyticsService.trackCartViewed(itemCount: itemCount, total: total);
   }
 
-  Future<void> _openMaps(BuildContext context) async {
-    final uri = Uri.parse(
-      'https://www.google.com/maps/search/?api=1&query=delivery+location',
+  Future<void> _loadSavedLocation() async {
+    final prefs = await SharedPreferences.getInstance();
+    final label = prefs.getString('user_location_label');
+    final lat = prefs.getDouble('user_location_lat');
+    final lng = prefs.getDouble('user_location_lng');
+    final display = _mergeLabel(label, lat, lng);
+    if (!mounted) return;
+    setState(() {
+      _locationLabel = display;
+      if (lat != null && lng != null) {
+        _locationCoords = LatLng(lat, lng);
+      }
+    });
+  }
+
+  Future<void> _openLocationPicker() async {
+    final result = await Navigator.push<Map<String, dynamic>?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const SelectLocationScreen(),
+        settings: const RouteSettings(name: '/select-location-cart'),
+      ),
     );
-    try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(LangStore.t('map.error'))),
-      );
+    if (result == null) return;
+    final label = (result['label'] ?? '').toString();
+    final lat = result['lat'] is num ? (result['lat'] as num).toDouble() : null;
+    final lng = result['lng'] is num ? (result['lng'] as num).toDouble() : null;
+    if (lat == null || lng == null) return;
+
+    final mergedLabel = _mergeLabel(label, lat, lng);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_location_label', mergedLabel);
+    await prefs.setDouble('user_location_lat', lat);
+    await prefs.setDouble('user_location_lng', lng);
+
+    if (!mounted) return;
+    setState(() {
+      _locationLabel = mergedLabel;
+      _locationCoords = LatLng(lat, lng);
+    });
+  }
+
+  String _mergeLabel(String? raw, double? lat, double? lng) {
+    final clean = (raw ?? '').trim();
+    final plus = _encodePlus(lat, lng);
+    if (clean.isNotEmpty) {
+      if (clean.contains('+')) return clean;
+      if (plus.isNotEmpty) return '$plus, $clean';
+      return clean;
     }
+    if (plus.isNotEmpty) return plus;
+    return 'Not Specified';
+  }
+
+  String _encodePlus(double? lat, double? lng) {
+    if (lat == null || lng == null) return '';
+    final code = olc.PlusCode.encode(
+      LatLng(lat, lng),
+      codeLength: 10,
+    );
+    return code.toString().split(' ').first;
   }
 
   void _handleCheckout(
@@ -58,15 +114,20 @@ class _CartScreenState extends State<CartScreen> {
     required List<CartItem> items,
     required double total,
   }) {
+    final baseNote = _remarkCtrl.text.trim();
+    final locationNote = _locationCoords != null
+        ? 'Location: ${_locationLabel.isNotEmpty ? _locationLabel : "Pinned location"}\nMaps: https://www.google.com/maps/search/?api=1&query=${_locationCoords!.latitude},${_locationCoords!.longitude}'
+        : '';
+    final combinedNote = [baseNote, locationNote]
+        .where((e) => e.trim().isNotEmpty)
+        .join('\n');
     final itemCount = items.fold<int>(0, (sum, it) => sum + it.quantity);
     AnalyticsService.trackCheckoutStarted(total: total, itemCount: itemCount);
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => CheckoutScreen(
-          initialNote: _remarkCtrl.text.trim(),
-        ),
+        builder: (_) => CheckoutScreen(initialNote: combinedNote),
         settings: const RouteSettings(name: '/checkout'),
       ),
     );
@@ -86,17 +147,15 @@ class _CartScreenState extends State<CartScreen> {
         centerTitle: true,
       ),
       body: ValueListenableBuilder<List<CartItem>>(
-      valueListenable: CartStore.items,
-      builder: (context, items, _) {
-        final subtotal = CartStore.subtotal();
-        final delivery = items.isEmpty ? 0.0 : 1.50;
-        final total = subtotal + delivery;
-        _trackCartView(items, total);
+        valueListenable: CartStore.items,
+        builder: (context, items, _) {
+          final subtotal = CartStore.subtotal();
+          final delivery = items.isEmpty ? 0.0 : 1.50;
+          final total = subtotal + delivery;
+          _trackCartView(items, total);
 
-        if (items.isEmpty) {
-          return Center(
-            child: Text(LangStore.t('cart.empty')),
-          );
+          if (items.isEmpty) {
+            return Center(child: Text(LangStore.t('cart.empty')));
           }
 
           return SingleChildScrollView(
@@ -105,7 +164,9 @@ class _CartScreenState extends State<CartScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _HeaderSection(
-                  onSelectLocation: () => _openMaps(context),
+                  onSelectLocation: _openLocationPicker,
+                  locationLabel: _locationLabel,
+                  locationCoords: _locationCoords,
                 ),
                 const SizedBox(height: 14),
                 Text(
@@ -116,10 +177,12 @@ class _CartScreenState extends State<CartScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                ...items.map((item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _CartItemTile(item: item),
-                    )),
+                ...items.map(
+                  (item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _CartItemTile(item: item),
+                  ),
+                ),
                 const Divider(height: 32),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -158,7 +221,10 @@ class _CartScreenState extends State<CartScreen> {
                 ),
                 const Divider(height: 32),
                 _SummaryRow(label: LangStore.t('cart.total'), value: subtotal),
-                _SummaryRow(label: LangStore.t('cart.delivery'), value: delivery),
+                _SummaryRow(
+                  label: LangStore.t('cart.delivery'),
+                  value: delivery,
+                ),
                 const SizedBox(height: 6),
                 _SummaryRow(
                   label: LangStore.t('cart.grandTotal'),
@@ -171,14 +237,14 @@ class _CartScreenState extends State<CartScreen> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
-                  ),
-                  onPressed: items.isEmpty
-                      ? null
-                      : () => _handleCheckout(
+                    onPressed: items.isEmpty
+                        ? null
+                        : () => _handleCheckout(
                             context,
                             items: items,
                             total: total,
@@ -247,58 +313,177 @@ class _CartBottomNav extends StatelessWidget {
       },
     );
   }
+
 }
 
 class _HeaderSection extends StatelessWidget {
   final VoidCallback onSelectLocation;
-  const _HeaderSection({required this.onSelectLocation});
+  final String locationLabel;
+  final LatLng? locationCoords;
+  const _HeaderSection({
+    required this.onSelectLocation,
+    required this.locationLabel,
+    required this.locationCoords,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              LangStore.t('cart.shipping'),
-              style: const TextStyle(fontWeight: FontWeight.w700),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
-            OutlinedButton(
-              onPressed: onSelectLocation,
-              style: OutlinedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                side: BorderSide(color: Colors.green.shade700),
+        ],
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.local_shipping_outlined,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    LangStore.t('cart.shipping'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
               ),
-              child: Text(LangStore.t('cart.selectLocation')),
+              OutlinedButton.icon(
+                onPressed: onSelectLocation,
+                icon: const Icon(Icons.place_outlined, size: 18),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  side: BorderSide(color: Colors.green.shade700),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                label: Text(
+                  LangStore.t('cart.selectLocation'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.receipt_long, color: Colors.yellow.shade800),
                 const SizedBox(width: 8),
-                Text(
-                  LangStore.t('cart.payment'),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            LangStore.t('cart.payment'),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.check_circle,
+                            color: Colors.blue.shade700,
+                            size: 18,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        LangStore.t('cart.payment.note'),
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Selected: $locationLabel",
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (locationCoords != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Row(
+                                  children: const [
+                                    Icon(Icons.link, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      "Maps link ready to share",
+                                      style: TextStyle(
+                                        color: Colors.black54,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            Icon(Icons.check_circle, color: Colors.blue.shade700),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.only(left: 32),
-          child: Text(LangStore.t('cart.payment.note')),
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -348,10 +533,8 @@ class _CartItemTile extends StatelessWidget {
                   children: [
                     _QtyButton(
                       icon: Icons.remove,
-                      onTap: () => CartStore.updateQuantity(
-                        item.id,
-                        item.quantity - 1,
-                      ),
+                      onTap: () =>
+                          CartStore.updateQuantity(item.id, item.quantity - 1),
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -362,10 +545,8 @@ class _CartItemTile extends StatelessWidget {
                     ),
                     _QtyButton(
                       icon: Icons.add,
-                      onTap: () => CartStore.updateQuantity(
-                        item.id,
-                        item.quantity + 1,
-                      ),
+                      onTap: () =>
+                          CartStore.updateQuantity(item.id, item.quantity + 1),
                     ),
                   ],
                 ),
@@ -401,8 +582,9 @@ class _CartItemImage extends StatelessWidget {
 
     final resolved = path.startsWith('/') ? 'http://127.0.0.1:8000$path' : path;
     final isNetwork = resolved.startsWith('http');
-    final ImageProvider<Object> provider =
-        isNetwork ? NetworkImage(resolved) : AssetImage(resolved);
+    final ImageProvider<Object> provider = isNetwork
+        ? NetworkImage(resolved)
+        : AssetImage(resolved);
 
     return Image(
       image: provider,
