@@ -193,7 +193,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             try:
                 product_obj = Product.objects.get(pk=int(product_id))
             except (TypeError, ValueError, Product.DoesNotExist):
-                product_obj = None
+                return Response(
+                    {"detail": f"Product not found for item {item}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             OrderItem.objects.create(
                 order=order,

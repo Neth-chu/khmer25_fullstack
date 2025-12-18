@@ -7,7 +7,7 @@ import 'package:khmer25/services/analytics_service.dart';
 import 'package:khmer25/account/select_location_screen.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:open_location_code/open_location_code.dart' as olc;
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -39,23 +39,10 @@ class _CartScreenState extends State<CartScreen> {
 
   void _trackCartView(List<CartItem> items, double total) {
     final itemCount = items.fold<int>(0, (sum, it) => sum + it.quantity);
-    final signature = '${itemCount}:${total.toStringAsFixed(2)}';
+    final signature = '$itemCount:${total.toStringAsFixed(2)}';
     if (_lastCartSignature == signature) return;
     _lastCartSignature = signature;
     AnalyticsService.trackCartViewed(itemCount: itemCount, total: total);
-  }
-
-  Future<void> _openMaps(BuildContext context) async {
-    final uri = Uri.parse(
-      'https://www.google.com/maps/search/?api=1&query=delivery+location',
-    );
-    try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(LangStore.t('map.error'))));
-    }
   }
 
   Future<void> _loadSavedLocation() async {
@@ -63,9 +50,10 @@ class _CartScreenState extends State<CartScreen> {
     final label = prefs.getString('user_location_label');
     final lat = prefs.getDouble('user_location_lat');
     final lng = prefs.getDouble('user_location_lng');
+    final display = _mergeLabel(label, lat, lng);
     if (!mounted) return;
     setState(() {
-      _locationLabel = label ?? 'Not Specified';
+      _locationLabel = display;
       if (lat != null && lng != null) {
         _locationCoords = LatLng(lat, lng);
       }
@@ -86,19 +74,39 @@ class _CartScreenState extends State<CartScreen> {
     final lng = result['lng'] is num ? (result['lng'] as num).toDouble() : null;
     if (lat == null || lng == null) return;
 
+    final mergedLabel = _mergeLabel(label, lat, lng);
+
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'user_location_label',
-      label.isNotEmpty ? label : 'Pinned location',
-    );
+    await prefs.setString('user_location_label', mergedLabel);
     await prefs.setDouble('user_location_lat', lat);
     await prefs.setDouble('user_location_lng', lng);
 
     if (!mounted) return;
     setState(() {
-      _locationLabel = label.isNotEmpty ? label : 'Pinned location';
+      _locationLabel = mergedLabel;
       _locationCoords = LatLng(lat, lng);
     });
+  }
+
+  String _mergeLabel(String? raw, double? lat, double? lng) {
+    final clean = (raw ?? '').trim();
+    final plus = _encodePlus(lat, lng);
+    if (clean.isNotEmpty) {
+      if (clean.contains('+')) return clean;
+      if (plus.isNotEmpty) return '$plus, $clean';
+      return clean;
+    }
+    if (plus.isNotEmpty) return plus;
+    return 'Not Specified';
+  }
+
+  String _encodePlus(double? lat, double? lng) {
+    if (lat == null || lng == null) return '';
+    final code = olc.PlusCode.encode(
+      LatLng(lat, lng),
+      codeLength: 10,
+    );
+    return code.toString().split(' ').first;
   }
 
   void _handleCheckout(
@@ -106,13 +114,20 @@ class _CartScreenState extends State<CartScreen> {
     required List<CartItem> items,
     required double total,
   }) {
+    final baseNote = _remarkCtrl.text.trim();
+    final locationNote = _locationCoords != null
+        ? 'Location: ${_locationLabel.isNotEmpty ? _locationLabel : "Pinned location"}\nMaps: https://www.google.com/maps/search/?api=1&query=${_locationCoords!.latitude},${_locationCoords!.longitude}'
+        : '';
+    final combinedNote = [baseNote, locationNote]
+        .where((e) => e.trim().isNotEmpty)
+        .join('\n');
     final itemCount = items.fold<int>(0, (sum, it) => sum + it.quantity);
     AnalyticsService.trackCheckoutStarted(total: total, itemCount: itemCount);
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => CheckoutScreen(initialNote: _remarkCtrl.text.trim()),
+        builder: (_) => CheckoutScreen(initialNote: combinedNote),
         settings: const RouteSettings(name: '/checkout'),
       ),
     );
@@ -298,6 +313,7 @@ class _CartBottomNav extends StatelessWidget {
       },
     );
   }
+
 }
 
 class _HeaderSection extends StatelessWidget {
@@ -312,67 +328,162 @@ class _HeaderSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              LangStore.t('cart.shipping'),
-              style: const TextStyle(fontWeight: FontWeight.w700),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
             ),
-            OutlinedButton(
-              onPressed: onSelectLocation,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                side: BorderSide(color: Colors.green.shade700),
+        ],
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      Icons.local_shipping_outlined,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    LangStore.t('cart.shipping'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
               ),
-              child: Text(LangStore.t('cart.selectLocation')),
+              OutlinedButton.icon(
+                onPressed: onSelectLocation,
+                icon: const Icon(Icons.place_outlined, size: 18),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  side: BorderSide(color: Colors.green.shade700),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                label: Text(
+                  LangStore.t('cart.selectLocation'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(Icons.receipt_long, color: Colors.yellow.shade800),
                 const SizedBox(width: 8),
-                Text(
-                  LangStore.t('cart.payment'),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            LangStore.t('cart.payment'),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.check_circle,
+                            color: Colors.blue.shade700,
+                            size: 18,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        LangStore.t('cart.payment.note'),
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Selected: $locationLabel",
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (locationCoords != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Row(
+                                  children: const [
+                                    Icon(Icons.link, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      "Maps link ready to share",
+                                      style: TextStyle(
+                                        color: Colors.black54,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            Icon(Icons.check_circle, color: Colors.blue.shade700),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.only(left: 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(LangStore.t('cart.payment.note')),
-              const SizedBox(height: 4),
-              Text(
-                "Selected: $locationLabel",
-                style: const TextStyle(color: Colors.black54, fontSize: 12),
-              ),
-              if (locationCoords != null)
-                Text(
-                  "Pin: ${locationCoords!.latitude.toStringAsFixed(5)}, ${locationCoords!.longitude.toStringAsFixed(5)}",
-                  style: const TextStyle(color: Colors.black45, fontSize: 11),
-                ),
-            ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
